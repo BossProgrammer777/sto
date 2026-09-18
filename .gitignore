@@ -1,0 +1,19 @@
+# Секреты и окружение
+.env
+*.json.key
+credentials.json
+service_account*.json
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+.mypy_cache/
+.pytest_cache/
+
+# Логи/временное
+*.log
+.DS_Store
