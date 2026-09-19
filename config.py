@@ -132,7 +132,7 @@ FIELDS: dict[str, dict] = {
                      "sheet_column": "ТИП Авто", "validation": "car_type", "required": False},
     "mop":          {"prompt": "✍️ Кто делает запись (МОП)?", "kind": "choice",
                      "sheet_column": "МОП Запись", "validation": "mop", "required": True,
-                     "per_row": 4},
+                     "per_row": 6},
 }
 
 
