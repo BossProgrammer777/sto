@@ -1,16 +1,22 @@
 """
-Слой доступа к Google Sheets (gspread) с ретраями.
+Слой доступа к Google Sheets (gspread + Sheets API) с ретраями.
 
-Отвечает за:
-  • чтение свободных слотов на город+дату из «красивой» простыни (грид);
-  • запись записи в служебный «плоский» лист (подход Б);
-  • (опционально, WRITE_TO_GRID) запись прямо в ячейку простыни (подход А);
-  • чтение допустимых значений выпадающих списков (data validation).
+Реальная структура «красивой» простыни (по калибровке):
+  • Каждый город — блок колонок; между блоками скрытые колонки-разделители.
+      Киев A–E (simple), Софиевская R–V (simple),
+      Харьков Z–AG (full), Днепр AL–AS (full), Львов дальше (full).
+  • Строка 1 — название города, строка 2 — дата, строка 3 — шапка колонок.
+  • Дата разбита: день недели («ВТ») в колонке «Время», сама дата
+    («01.09.2026») — в объединённой ячейке рядом. Матчим по «дд.мм.гггг».
+  • Блок даты ≈ 26 строк: дата → шапка → 2 строки-заглушки → 22 слота
+    9:00–19:30 → следующая дата. Время без ведущего нуля («9:00»).
 
-⚠️ КАЛИБРОВКА: точная геометрия грида (где начинается блок города, как
-идут строки дат/времени) финализируется по реальной таблице — см.
-inspect_sheet.py и функции _locate_* ниже. Пока используются эвристики
-по заголовкам колонок и меткам дат.
+Определение свободного слота (по решению заказчика):
+  СВОБОДНО = ячейка «Номер заказа» БЕЛАЯ и ПУСТАЯ, и нет активной записи
+  бота в плоском листе. Красный (занято/закрыто) и оранжевый (недоступно)
+  как свободные НЕ показываем.
+
+Значения + цвета читаем ОДНИМ запросом на месячный лист и кешируем.
 """
 
 from __future__ import annotations
@@ -18,6 +24,8 @@ from __future__ import annotations
 import json
 import logging
 import re
+import time as _time
+from dataclasses import dataclass
 from datetime import date, datetime
 
 import gspread
@@ -31,13 +39,15 @@ log = logging.getLogger(__name__)
 
 SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
 
-# Заголовки плоского служебного листа (подход Б).
 FLAT_HEADERS = [
     "timestamp", "city", "date", "time", "phone", "order_number",
     "diameter", "car_type", "price", "mop", "telegram_id", "status",
 ]
 
-_DATE_LABEL_RE = re.compile(r"^(ПН|ВТ|СР|ЧТ|ПТ|СБ|ВС)\s+\d{2}\.\d{2}\.\d{4}$")
+_TIME_RE = re.compile(r"^(\d{1,2}):(\d{2})(?::\d{2})?$")
+_DATE_IN_CELL_RE = re.compile(r"\b(\d{2}\.\d{2}\.\d{4})\b")
+
+MONTH_CACHE_TTL = 45  # сек — кеш прочитанного месячного листа (значения+цвета)
 
 
 class SheetError(Exception):
@@ -45,13 +55,51 @@ class SheetError(Exception):
 
 
 def _network_retry(fn):
-    """Ретраи при сетевых сбоях/времянных ошибках API (2s,4s,8s,16s)."""
     return retry(
         reraise=True,
         stop=stop_after_attempt(5),
         wait=wait_exponential(multiplier=2, min=2, max=16),
         retry=retry_if_exception_type((gspread.exceptions.APIError, ConnectionError, TimeoutError)),
     )(fn)
+
+
+def _norm_time(s: str) -> str | None:
+    m = _TIME_RE.match(s.strip())
+    if not m:
+        return None
+    return f"{int(m.group(1))}:{m.group(2)}"
+
+
+def _is_white(color: dict | None) -> bool:
+    """True, если фон белый / без заливки (иначе — цветной: красный, оранжевый…)."""
+    if not color:
+        return True  # нет заливки = белый
+    r = color.get("red", 0.0)
+    g = color.get("green", 0.0)
+    b = color.get("blue", 0.0)
+    return r >= 0.85 and g >= 0.85 and b >= 0.85
+
+
+@dataclass
+class MonthData:
+    """Разобранный месячный лист: значения и цвета фона."""
+    title: str
+    values: list[list[str]]
+    colors: list[list[dict | None]]
+
+    def val(self, r: int, c: int) -> str:
+        if 0 <= r < len(self.values) and 0 <= c < len(self.values[r]):
+            return self.values[r][c]
+        return ""
+
+    def color(self, r: int, c: int) -> dict | None:
+        if 0 <= r < len(self.colors) and 0 <= c < len(self.colors[r]):
+            return self.colors[r][c]
+        return None
+
+    @property
+    def nrows(self) -> int:
+        return len(self.values)
 
 
 class SheetsClient:
@@ -61,6 +109,7 @@ class SheetsClient:
         self.gc = gspread.authorize(creds)
         self.ss = self.gc.open_by_key(config.SPREADSHEET_ID)
         self._flat_ws = None
+        self._month_cache: dict[str, tuple[float, MonthData]] = {}
 
     # ───────────────────────── Плоский лист (подход Б) ─────────────────────────
 
@@ -79,160 +128,173 @@ class SheetsClient:
     @_network_retry
     def append_booking(self, *, city: config.City, d: date, time: str,
                        data: dict, mop: str, telegram_id: int) -> None:
-        """Дописать запись в плоский лист. status=active."""
         ws = self._flat()
         row = [
             datetime.now().isoformat(timespec="seconds"),
-            city.title,
-            d.isoformat(),
-            time,
-            data.get("phone", ""),
-            data.get("order_number", ""),
-            data.get("diameter", ""),
-            data.get("car_type", ""),
-            data.get("price", ""),
-            mop,
-            str(telegram_id),
-            "active",
+            city.title, d.isoformat(), time,
+            data.get("phone", ""), data.get("order_number", ""),
+            data.get("diameter", ""), data.get("car_type", ""),
+            data.get("price", ""), mop, str(telegram_id), "active",
         ]
         ws.append_row(row, value_input_option="USER_ENTERED")
+        self._month_cache.clear()  # слот занят — сбросить кеш доступности
 
     @_network_retry
     def _flat_booked_times(self, city: config.City, d: date) -> set[str]:
-        """Времена, уже занятые записями бота (плоский лист), на город+дату."""
         ws = self._flat()
-        records = ws.get_all_values()[1:]  # без заголовка
+        rows = ws.get_all_values()[1:]
         booked: set[str] = set()
         di = d.isoformat()
-        for r in records:
+        s_idx = FLAT_HEADERS.index("status")
+        for r in rows:
             r = r + [""] * (len(FLAT_HEADERS) - len(r))
-            _, c_city, c_date, c_time, *_rest = r
-            status = r[FLAT_HEADERS.index("status")]
-            if c_city == city.title and c_date == di and status == "active":
-                booked.add(c_time.strip())
+            if r[1] == city.title and r[2] == di and r[s_idx] == "active":
+                t = _norm_time(r[3])
+                if t:
+                    booked.add(t)
         return booked
 
-    # ───────────────────────── Красивая простыня (грид) ─────────────────────────
+    # ───────────────────────── Чтение месячного листа ─────────────────────────
 
     @_network_retry
-    def _month_ws(self, d: date):
+    def _load_month(self, d: date) -> MonthData:
         name = cal.month_sheet_name(d)
+        cached = self._month_cache.get(name)
+        if cached and (_time.time() - cached[0]) < MONTH_CACHE_TTL:
+            return cached[1]
+
         try:
-            return self.ss.worksheet(name)
-        except gspread.exceptions.WorksheetNotFound as e:
-            raise SheetError(f"Не найден месячный лист «{name}»") from e
+            meta = self.ss.fetch_sheet_metadata({
+                "includeGridData": True,
+                "ranges": [name],
+                "fields": ("sheets(properties(title),data(rowData(values("
+                           "formattedValue,effectiveFormat(backgroundColor)))))"),
+            })
+        except gspread.exceptions.APIError as e:
+            raise SheetError(f"Не удалось прочитать лист «{name}»: {e}") from e
 
-    def _locate_city_block(self, grid: list[list[str]], city: config.City) -> dict:
+        sheets = meta.get("sheets", [])
+        if not sheets:
+            raise SheetError(f"Месячный лист «{name}» не найден")
+
+        row_data = sheets[0].get("data", [{}])[0].get("rowData", [])
+        values: list[list[str]] = []
+        colors: list[list[dict | None]] = []
+        for row in row_data:
+            cells = row.get("values", []) or []
+            vrow, crow = [], []
+            for cell in cells:
+                vrow.append(cell.get("formattedValue", "") or "")
+                fmt = cell.get("effectiveFormat") or {}
+                crow.append(fmt.get("backgroundColor"))
+            values.append(vrow)
+            colors.append(crow)
+
+        md = MonthData(name, values, colors)
+        self._month_cache[name] = (_time.time(), md)
+        return md
+
+    def _block_start_col(self, md: MonthData, city: config.City) -> tuple[int, int]:
         """
-        Найти блок колонок города: ищем в верхних строках подпись города,
-        затем строку с заголовком «Время», от которой начинается блок.
-        Возвращает {start_col, header_row, columns}.
-
-        ⚠️ КАЛИБРОВКА: эвристика по подписи города и заголовку «Время».
+        (start_col, header_row) блока города. Блоки определяем по строке-шапке,
+        где несколько раз встречается «Время»; сопоставляем слева направо
+        порядку городов в config.CITIES.
         """
-        columns = config.LAYOUTS[city.layout]["columns"]
-        label = city.sheet_label.lower()
+        header_row = None
+        starts: list[int] = []
+        for r in range(min(8, md.nrows)):
+            cols = [c for c, v in enumerate(md.values[r]) if v.strip() == "Время"]
+            if len(cols) >= 2:
+                header_row = r
+                starts = sorted(cols)
+                break
+        if header_row is None:
+            raise SheetError("Не найдена строка-шапка с колонками «Время»")
 
-        # 1) колонка, где встречается подпись города
-        city_col = None
-        for r, row in enumerate(grid[:8]):
-            for c, val in enumerate(row):
-                if val and label in val.strip().lower():
-                    city_col = c
+        order = list(config.CITIES.keys())
+        if len(starts) < len(order):
+            log.warning("Найдено блоков «Время»: %d, городов: %d", len(starts), len(order))
+        try:
+            idx = order.index(city.key)
+            return starts[idx], header_row
+        except (ValueError, IndexError) as e:
+            raise SheetError(f"Не удалось сопоставить блок города «{city.title}»") from e
+
+    def _date_section(self, md: MonthData, start_col: int, width: int,
+                      d: date) -> tuple[int, int]:
+        """Границы строк секции даты: (первая строка секции, следующая дата/конец)."""
+        target = d.strftime("%d.%m.%Y")
+        date_rows: list[tuple[int, str]] = []
+        for r in range(md.nrows):
+            for c in range(start_col, start_col + width):
+                m = _DATE_IN_CELL_RE.search(md.val(r, c))
+                if m:
+                    date_rows.append((r, m.group(1)))
                     break
-            if city_col is not None:
-                break
-
-        # 2) от найденной колонки ищем ближайшую «Время» (начало блока)
-        for r, row in enumerate(grid[:12]):
-            for c, val in enumerate(row):
-                if val.strip() == "Время":
-                    if city_col is None or abs(c - city_col) <= len(columns):
-                        return {"start_col": c, "header_row": r, "columns": columns}
-
-        raise SheetError(f"Не удалось найти блок города «{city.title}» на листе")
-
-    def _locate_date_section(self, grid: list[list[str]], block: dict, d: date) -> tuple[int, int]:
-        """
-        Границы строк секции даты внутри блока: от строки метки даты до
-        следующей метки даты (или конца). Возвращает (start_row, end_row).
-
-        ⚠️ КАЛИБРОВКА: ищем метку даты в колонке «Время» блока.
-        """
-        col = block["start_col"]
-        target = cal.date_label(d)
-        start = None
-        for r in range(len(grid)):
-            cell = grid[r][col].strip() if col < len(grid[r]) else ""
-            if cell == target:
-                start = r
-                break
+        start = next((r for r, ds in date_rows if ds == target), None)
         if start is None:
-            raise SheetError(f"Дата «{target}» не найдена в блоке (лист {cal.month_sheet_name(d)})")
-
-        end = len(grid)
-        for r in range(start + 1, len(grid)):
-            cell = grid[r][col].strip() if col < len(grid[r]) else ""
-            if _DATE_LABEL_RE.match(cell):
-                end = r
-                break
+            raise SheetError(f"Дата «{target}» не найдена на листе {md.title}")
+        after = [r for r, _ in date_rows if r > start]
+        end = after[0] if after else md.nrows
         return start, end
+
+    # ───────────────────────── Свободные слоты ─────────────────────────
 
     @_network_retry
     def read_free_slots(self, city: config.City, d: date) -> list[str]:
-        """
-        Свободные слоты времени на город+дату.
-        Свободно = ячейка «Номер заказа» пустая в простыне И нет активной
-        записи бота в плоском листе на этот слот.
-        """
-        ws = self._month_ws(d)
-        grid = ws.get_all_values()
-        block = self._locate_city_block(grid, city)
-        start, end = self._locate_date_section(grid, block, d)
+        md = self._load_month(d)
+        width = len(config.LAYOUTS[city.layout]["columns"])
+        start_col, _ = self._block_start_col(md, city)
+        sec_start, sec_end = self._date_section(md, start_col, width, d)
 
-        time_col = block["start_col"] + config.column_index(city, "Время")
-        order_col = block["start_col"] + config.column_index(city, "Номер заказа")
+        time_col = start_col + config.column_index(city, "Время")
+        order_col = start_col + config.column_index(city, "Номер заказа")
 
-        occupied: set[str] = set()
-        times_in_grid: list[str] = []
-        for r in range(start, end):
-            row = grid[r]
-            t = row[time_col].strip() if time_col < len(row) else ""
-            if not t or not re.match(r"^\d{1,2}:\d{2}$", t):
+        free: list[str] = []
+        for r in range(sec_start, sec_end):
+            t = _norm_time(md.val(r, time_col))
+            if not t:
                 continue
-            times_in_grid.append(t)
-            order = row[order_col].strip() if order_col < len(row) else ""
-            if order:
-                occupied.add(t)
+            order_text = md.val(r, order_col).strip()
+            white = _is_white(md.color(r, order_col))
+            if order_text or not white:
+                continue  # занято (текст), закрыто (красный) или недоступно (оранжевый)
+            free.append(t)
 
-        occupied |= self._flat_booked_times(city, d)
+        # Исключить занятое ботом (плоский лист)
+        booked = self._flat_booked_times(city, d)
+        free = [t for t in free if t not in booked]
 
-        # Если в гриде удалось прочитать список времён — берём его, иначе дефолт.
-        all_times = times_in_grid or cal.slot_times()
-        return [t for t in all_times if t not in occupied]
+        # На сегодня не показывать прошедшее время
+        if d == date.today():
+            now = datetime.now()
+            free = [t for t in free
+                    if (int(t.split(":")[0]), int(t.split(":")[1])) >= (now.hour, now.minute)]
+        return free
+
+    # ───────────────────────── Запись в грид (подход А, опц.) ─────────────────────────
 
     @_network_retry
     def mark_slot_in_grid(self, city: config.City, d: date, time: str,
                           data: dict, mop: str) -> None:
-        """Подход А (опционально): вписать данные в ячейки простыни."""
+        """Опционально (WRITE_TO_GRID): вписать данные в ячейки простыни и залить красным."""
         if not config.WRITE_TO_GRID:
             return
-        ws = self._month_ws(d)
-        grid = ws.get_all_values()
-        block = self._locate_city_block(grid, city)
-        start, end = self._locate_date_section(grid, block, d)
-        time_col = block["start_col"] + config.column_index(city, "Время")
+        md = self._load_month(d)
+        width = len(config.LAYOUTS[city.layout]["columns"])
+        start_col, _ = self._block_start_col(md, city)
+        sec_start, sec_end = self._date_section(md, start_col, width, d)
+        time_col = start_col + config.column_index(city, "Время")
 
         target_row = None
-        for r in range(start, end):
-            row = grid[r]
-            if time_col < len(row) and row[time_col].strip() == time:
+        for r in range(sec_start, sec_end):
+            if _norm_time(md.val(r, time_col)) == _norm_time(time):
                 target_row = r
                 break
         if target_row is None:
             raise SheetError(f"Слот {time} не найден для записи в грид")
 
-        updates = []
+        ws = self.ss.worksheet(md.title)
         columns = config.LAYOUTS[city.layout]["columns"]
         value_map = {
             "Номер тел.": data.get("phone", ""),
@@ -242,41 +304,43 @@ class SheetsClient:
             "МОП Запись": mop,
             "Ориент. стоимость (4шт)": data.get("price", ""),
         }
+        updates = []
         for name, val in value_map.items():
             if name in columns and val:
-                c = block["start_col"] + columns.index(name)
+                c = start_col + columns.index(name)
                 a1 = gspread.utils.rowcol_to_a1(target_row + 1, c + 1)
                 updates.append({"range": a1, "values": [[val]]})
         if updates:
             ws.batch_update(updates, value_input_option="USER_ENTERED")
+        self._month_cache.clear()
 
     # ───────────────────────── Выпадающие списки ─────────────────────────
 
     @_network_retry
     def read_validation_values(self, city: config.City, column_name: str,
                                validation_key: str) -> list[str]:
-        """
-        Прочитать допустимые значения выпадающего списка из data validation
-        первой строки данных нужной колонки. При неудаче — fallback из config.
-        """
+        """Значения выпадающего списка из data validation; при неудаче — fallback."""
         try:
-            ws = self._month_ws(date.today())
-            grid = ws.get_all_values()
-            block = self._locate_city_block(grid, city)
-            col = block["start_col"] + config.column_index(city, column_name)
-            row = block["header_row"] + 2  # ориентировочно первая ячейка данных
-            a1 = gspread.utils.rowcol_to_a1(row, col + 1)
+            md = self._load_month(date.today())
+            width = len(config.LAYOUTS[city.layout]["columns"])
+            start_col, _ = self._block_start_col(md, city)
+            sec_start, sec_end = self._date_section(md, start_col, width, date.today())
+            time_col = start_col + config.column_index(city, "Время")
+            col = start_col + config.column_index(city, column_name)
+
+            data_row = next((r for r in range(sec_start, sec_end)
+                             if _norm_time(md.val(r, time_col))), sec_start + 1)
+            a1 = gspread.utils.rowcol_to_a1(data_row + 1, col + 1)
             meta = self.ss.fetch_sheet_metadata({
                 "includeGridData": True,
-                "ranges": [f"{ws.title}!{a1}"],
+                "ranges": [f"{md.title}!{a1}"],
                 "fields": "sheets(data(rowData(values(dataValidation))))",
             })
-            values = (meta["sheets"][0]["data"][0]["rowData"][0]["values"][0]
-                      ["dataValidation"]["condition"]["values"])
-            out = [v["userEnteredValue"] for v in values if "userEnteredValue" in v]
+            vals = (meta["sheets"][0]["data"][0]["rowData"][0]["values"][0]
+                    ["dataValidation"]["condition"]["values"])
+            out = [v["userEnteredValue"] for v in vals if "userEnteredValue" in v]
             if out:
                 return out
-        except Exception as e:  # noqa: BLE001 — чтение validation не критично
-            log.warning("Не удалось прочитать data validation (%s): %s; беру fallback",
-                        validation_key, e)
+        except Exception as e:  # noqa: BLE001
+            log.warning("data validation (%s) не прочитан: %s; беру fallback", validation_key, e)
         return config.FALLBACK_VALIDATION[validation_key]

@@ -61,14 +61,14 @@ def main() -> None:
         cells = [c[:12] for c in row[:args.cols]]
         print(f"{r:>3}: " + " | ".join(cells))
 
-    # Кандидаты меток дат
-    print("\n── Найденные метки дат (row, col, текст) ──")
+    # Кандидаты меток дат (дата «дд.мм.гггг» в отдельной ячейке блока)
+    print("\n── Найденные даты (row, col, текст) ──")
     import re
-    date_re = re.compile(r"^(ПН|ВТ|СР|ЧТ|ПТ|СБ|ВС)\s+\d{2}\.\d{2}\.\d{4}$")
+    date_re = re.compile(r"\b\d{2}\.\d{2}\.\d{4}\b")
     found = 0
     for r, row in enumerate(grid):
         for c, val in enumerate(row):
-            if date_re.match(val.strip()):
+            if date_re.search(val.strip()):
                 print(f"  ({r}, {c})  {val.strip()}")
                 found += 1
                 if found >= 20:
