@@ -12,10 +12,10 @@
     9:00–19:30 → следующая дата. Время без ведущего нуля («9:00»).
 
 Определение свободного слота (по решению заказчика):
-  СВОБОДНО = ячейка «Номер заказа» БЕЛАЯ и ПУСТАЯ, и нет активной записи
-  бота в плоском листе. Красный (занято/закрыто) и оранжевый (недоступно)
-  как свободные НЕ показываем.
+  СВОБОДНО = ячейка «Номер заказа» БЕЛАЯ и ПУСТАЯ.
+  Красный (занято/закрыто) и оранжевый (недоступно) — не свободны.
 
+Запись (подход А): бот пишет данные прямо в ячейки нужного слота простыни.
 Значения + цвета читаем ОДНИМ запросом на месячный лист и кешируем.
 """
 
@@ -26,7 +26,7 @@ import logging
 import re
 import time as _time
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import date
 
 import gspread
 from google.oauth2.service_account import Credentials
@@ -38,11 +38,6 @@ import calendar_utils as cal
 log = logging.getLogger(__name__)
 
 SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
-
-FLAT_HEADERS = [
-    "timestamp", "city", "date", "time", "phone", "order_number",
-    "diameter", "car_type", "price", "mop", "telegram_id", "status",
-]
 
 _TIME_RE = re.compile(r"^(\d{1,2}):(\d{2})(?::\d{2})?$")
 _DATE_IN_CELL_RE = re.compile(r"\b(\d{2}\.\d{2}\.\d{4})\b")
@@ -108,51 +103,7 @@ class SheetsClient:
         creds = Credentials.from_service_account_info(info, scopes=SCOPES)
         self.gc = gspread.authorize(creds)
         self.ss = self.gc.open_by_key(config.SPREADSHEET_ID)
-        self._flat_ws = None
         self._month_cache: dict[str, tuple[float, MonthData]] = {}
-
-    # ───────────────────────── Плоский лист (подход Б) ─────────────────────────
-
-    @_network_retry
-    def _flat(self):
-        if self._flat_ws is not None:
-            return self._flat_ws
-        try:
-            ws = self.ss.worksheet(config.FLAT_SHEET_NAME)
-        except gspread.exceptions.WorksheetNotFound:
-            ws = self.ss.add_worksheet(config.FLAT_SHEET_NAME, rows=2000, cols=len(FLAT_HEADERS))
-            ws.update("A1", [FLAT_HEADERS])
-        self._flat_ws = ws
-        return ws
-
-    @_network_retry
-    def append_booking(self, *, city: config.City, d: date, time: str,
-                       data: dict, mop: str, telegram_id: int) -> None:
-        ws = self._flat()
-        row = [
-            datetime.now().isoformat(timespec="seconds"),
-            city.title, d.isoformat(), time,
-            data.get("phone", ""), data.get("order_number", ""),
-            data.get("diameter", ""), data.get("car_type", ""),
-            data.get("price", ""), mop, str(telegram_id), "active",
-        ]
-        ws.append_row(row, value_input_option="USER_ENTERED")
-        self._month_cache.clear()  # слот занят — сбросить кеш доступности
-
-    @_network_retry
-    def _flat_booked_times(self, city: config.City, d: date) -> set[str]:
-        ws = self._flat()
-        rows = ws.get_all_values()[1:]
-        booked: set[str] = set()
-        di = d.isoformat()
-        s_idx = FLAT_HEADERS.index("status")
-        for r in rows:
-            r = r + [""] * (len(FLAT_HEADERS) - len(r))
-            if r[1] == city.title and r[2] == di and r[s_idx] == "active":
-                t = _norm_time(r[3])
-                if t:
-                    booked.add(t)
-        return booked
 
     # ───────────────────────── Чтение месячного листа ─────────────────────────
 
@@ -238,6 +189,19 @@ class SheetsClient:
         end = after[0] if after else md.nrows
         return start, end
 
+    def _slot_row(self, md: MonthData, city: config.City, d: date,
+                  time: str) -> tuple[int, int]:
+        """Вернуть (row, start_col) конкретного слота времени в блоке города."""
+        width = len(config.LAYOUTS[city.layout]["columns"])
+        start_col, _ = self._block_start_col(md, city)
+        sec_start, sec_end = self._date_section(md, start_col, width, d)
+        time_col = start_col + config.column_index(city, "Время")
+        want = _norm_time(time)
+        for r in range(sec_start, sec_end):
+            if _norm_time(md.val(r, time_col)) == want:
+                return r, start_col
+        raise SheetError(f"Слот {time} не найден на {d.isoformat()} ({city.title})")
+
     # ───────────────────────── Свободные слоты ─────────────────────────
 
     @_network_retry
@@ -261,58 +225,42 @@ class SheetsClient:
                 continue  # занято (текст), закрыто (красный) или недоступно (оранжевый)
             free.append(t)
 
-        # Исключить занятое ботом (плоский лист)
-        booked = self._flat_booked_times(city, d)
-        free = [t for t in free if t not in booked]
-
         # На сегодня не показывать прошедшее время
         if d == date.today():
+            from datetime import datetime
             now = datetime.now()
             free = [t for t in free
                     if (int(t.split(":")[0]), int(t.split(":")[1])) >= (now.hour, now.minute)]
         return free
 
-    # ───────────────────────── Запись в грид (подход А, опц.) ─────────────────────────
+    # ───────────────────────── Запись в грид (подход А) ─────────────────────────
 
     @_network_retry
-    def mark_slot_in_grid(self, city: config.City, d: date, time: str,
-                          data: dict, mop: str) -> None:
-        """Опционально (WRITE_TO_GRID): вписать данные в ячейки простыни и залить красным."""
-        if not config.WRITE_TO_GRID:
-            return
+    def write_booking(self, city: config.City, d: date, time: str, data: dict) -> None:
+        """Вписать данные записи прямо в ячейки нужного слота простыни."""
         md = self._load_month(d)
-        width = len(config.LAYOUTS[city.layout]["columns"])
-        start_col, _ = self._block_start_col(md, city)
-        sec_start, sec_end = self._date_section(md, start_col, width, d)
-        time_col = start_col + config.column_index(city, "Время")
+        target_row, start_col = self._slot_row(md, city, d, time)
 
-        target_row = None
-        for r in range(sec_start, sec_end):
-            if _norm_time(md.val(r, time_col)) == _norm_time(time):
-                target_row = r
-                break
-        if target_row is None:
-            raise SheetError(f"Слот {time} не найден для записи в грид")
-
-        ws = self.ss.worksheet(md.title)
         columns = config.LAYOUTS[city.layout]["columns"]
         value_map = {
             "Номер тел.": data.get("phone", ""),
             "Номер заказа": data.get("order_number", ""),
             "Диаметр": data.get("diameter", ""),
             "ТИП Авто": data.get("car_type", ""),
-            "МОП Запись": mop,
+            "МОП Запись": data.get("mop", ""),
             "Ориент. стоимость (4шт)": data.get("price", ""),
         }
+        ws = self.ss.worksheet(md.title)
         updates = []
         for name, val in value_map.items():
             if name in columns and val:
                 c = start_col + columns.index(name)
                 a1 = gspread.utils.rowcol_to_a1(target_row + 1, c + 1)
                 updates.append({"range": a1, "values": [[val]]})
-        if updates:
-            ws.batch_update(updates, value_input_option="USER_ENTERED")
-        self._month_cache.clear()
+        if not updates:
+            raise SheetError("Нет данных для записи")
+        ws.batch_update(updates, value_input_option="USER_ENTERED")
+        self._month_cache.clear()  # слот занят — сбросить кеш доступности
 
     # ───────────────────────── Выпадающие списки ─────────────────────────
 

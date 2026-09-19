@@ -9,9 +9,8 @@
 
 from __future__ import annotations
 
-import json
 import os
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 from dotenv import load_dotenv
 
@@ -30,28 +29,14 @@ def _get(name: str, default: str | None = None, required: bool = False) -> str:
 TELEGRAM_BOT_TOKEN = _get("TELEGRAM_BOT_TOKEN", required=True)
 SPREADSHEET_ID = _get("SPREADSHEET_ID", required=True)
 GOOGLE_CREDENTIALS_JSON = _get("GOOGLE_CREDENTIALS_JSON", required=True)
-FLAT_SHEET_NAME = _get("FLAT_SHEET_NAME", "Записи_Бот")
 DAYS_AHEAD = int(_get("DAYS_AHEAD", "14"))
-WRITE_TO_GRID = _get("WRITE_TO_GRID", "false").lower() in ("1", "true", "yes", "да")
-
-
-def _load_operators() -> dict[int, str]:
-    """Маппинг Telegram ID -> имя МОП. Ключи = whitelist доступа."""
-    raw = _get("OPERATORS_JSON", "{}")
-    try:
-        data = json.loads(raw)
-    except json.JSONDecodeError as e:
-        raise RuntimeError(f"OPERATORS_JSON — некорректный JSON: {e}") from e
-    return {int(k): str(v).strip() for k, v in data.items()}
-
-
-OPERATORS: dict[int, str] = _load_operators()
 
 
 def _load_allowed_ids() -> set[int]:
-    ids = set(OPERATORS.keys())
-    extra = _get("ALLOWED_OPERATOR_IDS", "")
-    for part in extra.replace(";", ",").split(","):
+    """Whitelist Telegram ID операторов с доступом к боту (через запятую)."""
+    raw = _get("ALLOWED_OPERATOR_IDS", "")
+    ids: set[int] = set()
+    for part in raw.replace(";", ",").split(","):
         part = part.strip()
         if part:
             ids.add(int(part))
@@ -59,11 +44,6 @@ def _load_allowed_ids() -> set[int]:
 
 
 ALLOWED_OPERATOR_IDS: set[int] = _load_allowed_ids()
-
-
-def operator_name(telegram_id: int) -> str | None:
-    """Имя МОП по Telegram ID для авто-заполнения колонки «МОП Запись»."""
-    return OPERATORS.get(telegram_id)
 
 
 def is_allowed(telegram_id: int) -> bool:
@@ -79,20 +59,21 @@ def is_allowed(telegram_id: int) -> bool:
 #  full (Харьков, Днепр, Львов):
 #     Время | Номер тел. | Номер заказа | Диаметр | ТИП Авто | МОП Запись |
 #     Ориент. стоимость (4шт) | ПРОЗВОН МОП ШМ
+#
+# ask_fields — какие поля бот спрашивает у оператора и в каком порядке.
+# «МОП Запись» оператор выбирает из списка (поле mop).
 
 LAYOUTS: dict[str, dict] = {
     "simple": {
-        # Колонки блока по порядку (индекс = смещение от начала блока).
         "columns": ["Время", "Номер заказа", "Диаметр", "МОП Запись", "ПРОЗВОН МОП ШМ"],
-        # Какие поля бот спрашивает у оператора и в каком порядке.
-        "ask_fields": ["order_number", "diameter"],
+        "ask_fields": ["order_number", "diameter", "mop"],
     },
     "full": {
         "columns": [
             "Время", "Номер тел.", "Номер заказа", "Диаметр", "ТИП Авто",
             "МОП Запись", "Ориент. стоимость (4шт)", "ПРОЗВОН МОП ШМ",
         ],
-        "ask_fields": ["phone", "order_number", "diameter", "car_type", "price"],
+        "ask_fields": ["phone", "order_number", "diameter", "car_type", "price", "mop"],
     },
 }
 
@@ -102,13 +83,13 @@ class City:
     key: str            # внутренний ключ
     title: str          # как показываем оператору
     layout: str         # simple | full
-    sheet_label: str    # как город подписан в самой таблице (для поиска блока)
+    sheet_label: str    # как город подписан в самой таблице
 
 
-# Порядок = порядок кнопок в боте.
+# Порядок = порядок блоков в таблице (слева направо) и кнопок в боте.
 CITIES: dict[str, City] = {
     "kyiv": City("kyiv", "Киев (ПОСТ №1)", "simple", "Киев"),
-    "sofiyivska": City("sofiyivska", "Софиевская Борщагивка", "simple", "Софиевская Борщагивка"),
+    "sofiyivska": City("sofiyivska", "Софиевская Борщагивка", "simple", "Софиївська"),
     "kharkiv": City("kharkiv", "Харьков", "full", "Харьков"),
     "dnipro": City("dnipro", "Днепр", "full", "Днепр"),
     "lviv": City("lviv", "Львов", "full", "Львов"),
@@ -122,17 +103,12 @@ def city_by_title(title: str) -> City | None:
     return None
 
 
-def layout_of(city: City) -> dict:
-    return LAYOUTS[city.layout]
-
-
 def column_index(city: City, column_name: str) -> int:
     """Смещение колонки внутри блока города (0 = колонка «Время»)."""
     return LAYOUTS[city.layout]["columns"].index(column_name)
 
 
 # ─────────────────────────── Поля сбора данных ───────────────────────────
-# Метаданные полей, которые бот спрашивает у оператора.
 # kind: text — свободный ввод; choice — выбор из выпадающего списка (кнопки).
 
 FIELDS: dict[str, dict] = {
@@ -146,6 +122,8 @@ FIELDS: dict[str, dict] = {
                      "sheet_column": "ТИП Авто", "validation": "car_type"},
     "price":        {"prompt": "💵 Введите ориент. стоимость (4 шт):", "kind": "text",
                      "sheet_column": "Ориент. стоимость (4шт)"},
+    "mop":          {"prompt": "✍️ Кто делает запись (МОП)?", "kind": "choice",
+                     "sheet_column": "МОП Запись", "validation": "mop"},
 }
 
 
@@ -181,5 +159,5 @@ WORK_END_HOUR = 19
 WORK_END_MINUTE = 30
 SLOT_STEP_MIN = 30
 
-# Формат времени в таблице. ВНИМАНИЕ: уточняется на калибровке ("9:00" vs "09:00").
+# Формат времени в таблице: «9:00» (без ведущего нуля) — подтверждено калибровкой.
 TIME_FORMAT_LEADING_ZERO = False

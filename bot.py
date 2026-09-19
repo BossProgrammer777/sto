@@ -64,7 +64,7 @@ def _summary_text(ud: dict) -> str:
         lines.append(f"🚗 Тип авто: <b>{d['car_type']}</b>")
     if "price" in d:
         lines.append(f"💵 Стоимость: <b>{d['price']}</b>")
-    lines.append(f"✍️ МОП Запись: <b>{ud['mop']}</b>")
+    lines.append(f"✍️ МОП Запись: <b>{d.get('mop', '')}</b>")
     return "\n".join(lines)
 
 
@@ -77,11 +77,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         await update.message.reply_text(_deny_text())
         return ConversationHandler.END
 
-    mop = config.operator_name(user.id)
     context.user_data.clear()
-    context.user_data["mop"] = mop or "—"
     await update.message.reply_text(
-        f"👋 Привет, <b>{mop or user.first_name}</b>!\n"
+        f"👋 Привет, <b>{user.first_name}</b>!\n"
         "Запишем клиента. Выберите город:",
         parse_mode="HTML", reply_markup=kb.cities_kb(),
     )
@@ -241,9 +239,6 @@ async def confirm(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         return CONFIRM
 
     city: config.City = ud["city"]
-    user = update.effective_user
-    mop = config.operator_name(user.id) or "—"
-    ud["mop"] = mop
 
     await update.message.reply_text("💾 Сохраняю запись…", reply_markup=kb.remove_kb())
     try:
@@ -257,7 +252,7 @@ async def confirm(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
             ud["free"] = free
             return SELECT_TIME
 
-        await _run_booking(city, ud, mop, user.id)
+        await _run(sheets.write_booking, city, ud["date"], ud["time"], ud["data"])
     except SheetError as e:
         log.error("Ошибка записи: %s", e)
         await update.message.reply_text(f"⚠️ Не удалось сохранить запись: {e}\n"
@@ -274,14 +269,6 @@ async def confirm(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     )
     await update.message.reply_text("Для новой записи нажмите /start")
     return ConversationHandler.END
-
-
-async def _run_booking(city, ud, mop, telegram_id):
-    def _do():
-        sheets.append_booking(city=city, d=ud["date"], time=ud["time"],
-                              data=ud["data"], mop=mop, telegram_id=telegram_id)
-        sheets.mark_slot_in_grid(city, ud["date"], ud["time"], ud["data"], mop)
-    await asyncio.to_thread(_do)
 
 
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
