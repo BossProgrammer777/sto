@@ -42,7 +42,8 @@ SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
 _TIME_RE = re.compile(r"^(\d{1,2}):(\d{2})(?::\d{2})?$")
 _DATE_IN_CELL_RE = re.compile(r"\b(\d{2}\.\d{2}\.\d{4})\b")
 
-MONTH_CACHE_TTL = 45  # сек — кеш прочитанного месячного листа (значения+цвета)
+MONTH_CACHE_TTL = 45      # сек — кеш прочитанного месячного листа (значения+цвета)
+VAL_CACHE_TTL = 6 * 3600  # сек — кеш значений выпадающих списков (меняются редко)
 
 
 class SheetError(Exception):
@@ -104,6 +105,7 @@ class SheetsClient:
         self.gc = gspread.authorize(creds)
         self.ss = self.gc.open_by_key(config.SPREADSHEET_ID)
         self._month_cache: dict[str, tuple[float, MonthData]] = {}
+        self._val_cache: dict[str, tuple[float, list[str]]] = {}
 
     # ───────────────────────── Чтение месячного листа ─────────────────────────
 
@@ -276,10 +278,35 @@ class SheetsClient:
 
     # ───────────────────────── Выпадающие списки ─────────────────────────
 
+    def _expand_condition(self, cond: dict) -> list[str]:
+        """Развернуть условие data validation в список значений.
+        Поддерживает и явный перечень (ONE_OF_LIST), и ссылку на диапазон
+        (ONE_OF_RANGE) — во втором случае дочитываем значения диапазона.
+        """
+        ctype = cond.get("type")
+        vals = cond.get("values", []) or []
+        if ctype == "ONE_OF_LIST":
+            return [v["userEnteredValue"] for v in vals if v.get("userEnteredValue")]
+        if ctype == "ONE_OF_RANGE" and vals:
+            ref = vals[0].get("userEnteredValue", "").lstrip("=")
+            if not ref:
+                return []
+            resp = self.ss.values_get(ref)
+            out: list[str] = []
+            for row in resp.get("values", []):
+                if row and str(row[0]).strip():
+                    out.append(str(row[0]).strip())
+            return out
+        return []
+
     @_network_retry
     def read_validation_values(self, city: config.City, column_name: str,
                                validation_key: str) -> list[str]:
-        """Значения выпадающего списка из data validation; при неудаче — fallback."""
+        """Значения выпадающего списка из data validation (кешируются надолго);
+        при неудаче — fallback из config."""
+        cached = self._val_cache.get(validation_key)
+        if cached and (_time.time() - cached[0]) < VAL_CACHE_TTL:
+            return cached[1]
         try:
             md = self._load_month(date.today())
             width = len(config.LAYOUTS[city.layout]["columns"])
@@ -296,10 +323,11 @@ class SheetsClient:
                 "ranges": [f"{md.title}!{a1}"],
                 "fields": "sheets(data(rowData(values(dataValidation))))",
             })
-            vals = (meta["sheets"][0]["data"][0]["rowData"][0]["values"][0]
-                    ["dataValidation"]["condition"]["values"])
-            out = [v["userEnteredValue"] for v in vals if "userEnteredValue" in v]
+            cond = (meta["sheets"][0]["data"][0]["rowData"][0]["values"][0]
+                    ["dataValidation"]["condition"])
+            out = self._expand_condition(cond)
             if out:
+                self._val_cache[validation_key] = (_time.time(), out)
                 return out
         except Exception as e:  # noqa: BLE001
             log.warning("data validation (%s) не прочитан: %s; беру fallback", validation_key, e)
