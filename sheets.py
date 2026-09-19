@@ -76,6 +76,16 @@ def _is_white(color: dict | None) -> bool:
     return r >= 0.85 and g >= 0.85 and b >= 0.85
 
 
+def _is_red(color: dict | None) -> bool:
+    """True, если фон красный (закрыто). Оранжевый под это НЕ подпадает."""
+    if not color:
+        return False
+    r = color.get("red", 0.0)
+    g = color.get("green", 0.0)
+    b = color.get("blue", 0.0)
+    return r >= 0.7 and g <= 0.5 and b <= 0.5
+
+
 @dataclass
 class MonthData:
     """Разобранный месячный лист: значения и цвета фона."""
@@ -257,21 +267,24 @@ class SheetsClient:
         big = config.needs_two_slots(city, diameter)
         empties = [not md.val(r, order_col).strip() for r, _ in slots]   # пусто?
         whites = [_is_white(md.color(r, order_col)) for r, _ in slots]
+        reds = [_is_red(md.color(r, order_col)) for r, _ in slots]
 
         free: list[str] = []
         n = len(slots)
         for i, (r, t) in enumerate(slots):
-            if not empties[i]:
+            # СТАРТ записи всегда только на белом пустом слоте (оранжевый/красный
+            # стартом быть не может).
+            if not (empties[i] and whites[i]):
                 continue
             if big:
-                # нужен пустой следующий слот, либо это последний пустой слот дня
-                next_empty = (i + 1 < n) and empties[i + 1]
-                last_free = not any(empties[j] for j in range(i + 1, n))
-                if next_empty or last_free:
+                # R20+: второй слот должен быть пустым и НЕ красным (белый или
+                # оранжевый); либо это последний белый слот дня — тогда 1 слот.
+                has_second = (i + 1 < n) and empties[i + 1] and not reds[i + 1]
+                is_last_white = not any(empties[j] and whites[j] for j in range(i + 1, n))
+                if has_second or is_last_white:
                     free.append(t)
             else:
-                if whites[i]:  # обычная запись — только белые пустые
-                    free.append(t)
+                free.append(t)
 
         # На сегодня не показывать прошедшее время
         if d == date.today():
@@ -298,7 +311,8 @@ class SheetsClient:
         target_rows = [slots[idx][0]]
         if config.needs_two_slots(city, data.get("diameter", "")) and idx + 1 < len(slots):
             nr = slots[idx + 1][0]
-            if not md.val(nr, order_col).strip():  # следующий пуст — занимаем и его
+            # второй слот занимаем, если он пуст и не красный (белый/оранжевый)
+            if not md.val(nr, order_col).strip() and not _is_red(md.color(nr, order_col)):
                 target_rows.append(nr)
 
         value_map = {
