@@ -54,9 +54,6 @@ async def _warm_cache(dates) -> None:
     """Фоново прогреть кеш таблицы (слоты + список МОП), чтобы шаги были мгновенны."""
     try:
         await asyncio.to_thread(sheets.prefetch, dates)
-        # список МОП читается один раз и кешируется надолго
-        await asyncio.to_thread(sheets.read_validation_values,
-                                next(iter(config.CITIES.values())), "МОП Запись", "mop")
     except Exception as e:  # noqa: BLE001
         log.info("Прогрев кеша не удался: %s", e)
 
