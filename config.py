@@ -70,19 +70,30 @@ def is_allowed(telegram_id: int) -> bool:
 # ВНИМАНИЕ: список columns описывает ВСЕ колонки блока по порядку (для точной
 # адресации ячеек), даже те, что бот не заполняет («Ориент. стоимость», «ПРОЗВОН»).
 # ask_fields — только то, что бот реально спрашивает у оператора.
+# Диаметр спрашивается ОТДЕЛЬНЫМ шагом ДО выбора времени (от него зависит,
+# сколько слотов занимает запись), поэтому его нет в ask_fields.
 LAYOUTS: dict[str, dict] = {
     "simple": {
         "columns": ["Время", "Номер заказа", "Диаметр", "МОП Запись", "ПРОЗВОН МОП ШМ"],
-        "ask_fields": ["order_number", "diameter", "mop"],
+        "ask_fields": ["order_number", "mop"],
     },
     "full": {
         "columns": [
             "Время", "Номер тел.", "Номер заказа", "Диаметр", "ТИП Авто",
             "МОП Запись", "Ориент. стоимость (4шт)", "ПРОЗВОН МОП ШМ",
         ],
-        "ask_fields": ["phone", "order_number", "diameter", "car_type", "mop"],
+        "ask_fields": ["phone", "order_number", "car_type", "mop"],
     },
 }
+
+# Города, где большие шины (R20+) занимают 2 подряд слота («2 поста»).
+# Пока только Киев; Харьков добавится позже — просто впишите ключ сюда.
+TWO_POST_CITIES: set[str] = {"kyiv"}
+BIG_DIAMETERS: set[str] = {"R20", "R21", "R22"}
+
+
+def needs_two_slots(city: "City", diameter: str) -> bool:
+    return city.key in TWO_POST_CITIES and (diameter or "").strip() in BIG_DIAMETERS
 
 
 @dataclass(frozen=True)

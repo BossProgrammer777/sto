@@ -33,7 +33,7 @@ log = logging.getLogger("shino-bot")
 # Стейты диалога
 (SELECT_CITY, SELECT_DATE, SELECT_TIME, COLLECT, CONFIRM,
  MENU, SEARCH_QUERY, SEARCH_PICK, ACTION, CONFIRM_DELETE,
- RS_CITY, RS_DATE, RS_TIME) = range(13)
+ RS_CITY, RS_DATE, RS_TIME, SELECT_DIAMETER) = range(14)
 
 sheets: SheetsClient  # инициализируется в main()
 
@@ -150,39 +150,72 @@ async def select_date(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
         return SELECT_DATE
 
     context.user_data["date"] = d
+    return await _ask_diameter(update, context)
+
+
+async def _ask_diameter(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Спросить диаметр ДО времени (от него зависит число занимаемых слотов)."""
     city: config.City = context.user_data["city"]
+    values = await _run(sheets.read_validation_values, city, "Диаметр", "diameter")
+    context.user_data["_diam_choices"] = values
+    await update.message.reply_text(
+        "⭕ Выберите диаметр:",
+        reply_markup=kb.choice_kb(values, per_row=4, allow_skip=True))
+    return SELECT_DIAMETER
+
+
+async def _show_free_times(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Прочитать и показать свободные слоты (с учётом диаметра). Вернуть стейт."""
+    ud = context.user_data
+    city, d = ud["city"], ud["date"]
+    diameter = ud["data"].get("diameter", "")
     await update.message.reply_text("⏳ Читаю свободные слоты…")
     try:
-        free = await _run(sheets.read_free_slots, city, d)
+        free = await _run(sheets.read_free_slots, city, d, False, diameter)
     except SheetError as e:
         log.warning("Ошибка чтения слотов: %s", e)
-        await update.message.reply_text(
-            f"⚠️ Не удалось прочитать расписание: {e}\nПопробуйте другую дату или позже.",
-            reply_markup=kb.dates_kb(context.user_data["dates"]),
-        )
-        return SELECT_DATE
-
+        await update.message.reply_text(f"⚠️ Не удалось прочитать расписание: {e}")
+        return await _ask_diameter(update, context)
     if not free:
+        note = "\n(для больших шин R20+ нужны 2 свободных слота подряд)" \
+            if config.needs_two_slots(city, diameter) else ""
         await update.message.reply_text(
-            "😔 На эту дату свободных слотов нет. Выберите другую:",
-            reply_markup=kb.dates_kb(context.user_data["dates"]),
-        )
-        return SELECT_DATE
-
-    context.user_data["free"] = free
+            f"😔 Свободных слотов на эту дату нет.{note}\n"
+            "Выберите другой диаметр или дату:")
+        return await _ask_diameter(update, context)
+    ud["free"] = free
+    big = " (займёт 2 слота)" if config.needs_two_slots(city, diameter) else ""
     await update.message.reply_text(
-        f"⏰ Свободное время на <b>{cal.date_label(d)}</b>:",
-        parse_mode="HTML", reply_markup=kb.times_kb(free),
-    )
+        f"⏰ Свободное время на <b>{cal.date_label(d)}</b>{big}:",
+        parse_mode="HTML", reply_markup=kb.times_kb(free))
     return SELECT_TIME
+
+
+async def select_diameter(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    ud = context.user_data
+    text = update.message.text.strip()
+    if text == kb.BTN_BACK:
+        await update.message.reply_text("📅 Выберите дату:",
+                                        reply_markup=kb.dates_kb(ud["dates"]))
+        return SELECT_DATE
+    if text == kb.BTN_SKIP:
+        diameter = ""
+    elif text in ud.get("_diam_choices", []):
+        diameter = text
+    else:
+        await update.message.reply_text(
+            "🤔 Выберите диаметр кнопкой.",
+            reply_markup=kb.choice_kb(ud["_diam_choices"], per_row=4, allow_skip=True))
+        return SELECT_DIAMETER
+
+    ud["data"] = {"diameter": diameter}
+    return await _show_free_times(update, context)
 
 
 async def select_time(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     text = update.message.text.strip()
     if text == kb.BTN_BACK:
-        await update.message.reply_text("📅 Выберите дату:",
-                                        reply_markup=kb.dates_kb(context.user_data["dates"]))
-        return SELECT_DATE
+        return await _ask_diameter(update, context)
 
     if text not in context.user_data.get("free", []):
         await update.message.reply_text("🤔 Выберите время кнопкой.",
@@ -193,7 +226,7 @@ async def select_time(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
     city: config.City = context.user_data["city"]
     context.user_data["fields"] = list(config.LAYOUTS[city.layout]["ask_fields"])
     context.user_data["field_idx"] = 0
-    context.user_data["data"] = {}
+    # data уже содержит diameter (выбран на шаге диаметра) — не сбрасываем
     return await _ask_current_field(update, context)
 
 
@@ -233,15 +266,13 @@ async def collect(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     text = update.message.text.strip()
 
     if text == kb.BTN_BACK:
-        ud["field_idx"] = max(0, ud["field_idx"] - 1)
-        # если ушли до первого поля — вернёмся к выбору времени
-        if ud["field_idx"] == 0 and update.message.text == kb.BTN_BACK and not ud["data"]:
+        if ud["field_idx"] == 0:
+            # с первого поля — назад к выбору времени
             await update.message.reply_text("⏰ Выберите время:",
                                             reply_markup=kb.times_kb(ud["free"]))
             return SELECT_TIME
-        # снять последнее сохранённое значение
-        prev_field = ud["fields"][ud["field_idx"]]
-        ud["data"].pop(prev_field, None)
+        ud["field_idx"] -= 1
+        ud["data"].pop(ud["fields"][ud["field_idx"]], None)
         return await _ask_current_field(update, context)
 
     idx = ud["field_idx"]
@@ -294,7 +325,8 @@ async def confirm(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     await update.message.reply_text("💾 Сохраняю запись…", reply_markup=kb.remove_kb())
     try:
         # На всякий случай ещё раз проверим, что слот не заняли параллельно.
-        free = await _run(sheets.read_free_slots, city, ud["date"], True)  # свежее чтение
+        free = await _run(sheets.read_free_slots, city, ud["date"], True,
+                          ud["data"].get("diameter", ""))  # свежее чтение
         if ud["time"] not in free:
             await update.message.reply_text(
                 "😳 Пока вы заполняли, слот заняли. Выберите другое время:",
@@ -481,9 +513,10 @@ async def rs_date(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         return RS_DATE
     context.user_data["rs_date"] = d
     city = context.user_data["rs_city"]
+    diameter = context.user_data["selected"].data.get("diameter", "")
     await update.message.reply_text("⏳ Читаю свободные слоты…")
     try:
-        free = await _run(sheets.read_free_slots, city, d)
+        free = await _run(sheets.read_free_slots, city, d, False, diameter)
     except SheetError as e:
         await update.message.reply_text(f"⚠️ {e}\nВыберите другую дату:",
                                         reply_markup=kb.dates_kb(context.user_data["rs_dates"]))
@@ -519,7 +552,8 @@ async def rs_time(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
 
     await update.message.reply_text("🔁 Переношу…", reply_markup=kb.remove_kb())
     try:
-        free = await _run(sheets.read_free_slots, new_city, new_d, True)  # свежее
+        free = await _run(sheets.read_free_slots, new_city, new_d, True,
+                          b.data.get("diameter", ""))  # свежее
         if new_time not in free:
             await update.message.reply_text("😳 Слот уже заняли. Выберите другое время:",
                                             reply_markup=kb.times_kb(free))
@@ -555,6 +589,7 @@ def build_app() -> Application:
             MENU: [cancel_h, MessageHandler(filters.TEXT & ~filters.COMMAND, menu)],
             SELECT_CITY: [cancel_h, MessageHandler(filters.TEXT & ~filters.COMMAND, select_city)],
             SELECT_DATE: [cancel_h, MessageHandler(filters.TEXT & ~filters.COMMAND, select_date)],
+            SELECT_DIAMETER: [cancel_h, MessageHandler(filters.TEXT & ~filters.COMMAND, select_diameter)],
             SELECT_TIME: [cancel_h, MessageHandler(filters.TEXT & ~filters.COMMAND, select_time)],
             COLLECT: [cancel_h, MessageHandler(filters.TEXT & ~filters.COMMAND, collect)],
             CONFIRM: [cancel_h, MessageHandler(filters.TEXT & ~filters.COMMAND, confirm)],

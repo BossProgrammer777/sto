@@ -201,16 +201,27 @@ class SheetsClient:
         end = after[0] if after else md.nrows
         return start, end
 
-    def _slot_row(self, md: MonthData, city: config.City, d: date,
-                  time: str) -> tuple[int, int]:
-        """Вернуть (row, start_col) конкретного слота времени в блоке города."""
+    def _section_slots(self, md: MonthData, city: config.City,
+                       d: date) -> tuple[int, list[tuple[int, str]]]:
+        """(start_col, [(строка, время)...]) — слоты времени секции даты по порядку."""
         width = len(config.LAYOUTS[city.layout]["columns"])
         start_col, _ = self._block_start_col(md, city)
         sec_start, sec_end = self._date_section(md, start_col, width, d)
         time_col = start_col + config.column_index(city, "Время")
-        want = _norm_time(time)
+        slots: list[tuple[int, str]] = []
         for r in range(sec_start, sec_end):
-            if _norm_time(md.val(r, time_col)) == want:
+            t = _norm_time(md.val(r, time_col))
+            if t:
+                slots.append((r, t))
+        return start_col, slots
+
+    def _slot_row(self, md: MonthData, city: config.City, d: date,
+                  time: str) -> tuple[int, int]:
+        """Вернуть (row, start_col) конкретного слота времени в блоке города."""
+        start_col, slots = self._section_slots(md, city, d)
+        want = _norm_time(time)
+        for r, t in slots:
+            if t == want:
                 return r, start_col
         raise SheetError(f"Слот {time} не найден на {d.isoformat()} ({city.title})")
 
@@ -230,29 +241,40 @@ class SheetsClient:
                 log.info("prefetch %s не удался: %s", cal.month_sheet_name(d), e)
 
     @_network_retry
-    def read_free_slots(self, city: config.City, d: date, force: bool = False) -> list[str]:
+    def read_free_slots(self, city: config.City, d: date, force: bool = False,
+                        diameter: str = "") -> list[str]:
+        """
+        Свободные слоты на город+дату.
+        Обычно: ячейка «Номер заказа» белая и пустая.
+        Большие шины (R20+) в Киеве занимают 2 подряд слота: слот подходит,
+        если он пуст (цвет неважен) И следующий слот пуст ИЛИ это последний
+        свободный слот дня. Свободность считается по пустоте «Номер заказа».
+        """
         md = self._load_month(d, force=force)
-        width = len(config.LAYOUTS[city.layout]["columns"])
-        start_col, _ = self._block_start_col(md, city)
-        sec_start, sec_end = self._date_section(md, start_col, width, d)
-
-        time_col = start_col + config.column_index(city, "Время")
+        start_col, slots = self._section_slots(md, city, d)
         order_col = start_col + config.column_index(city, "Номер заказа")
 
+        big = config.needs_two_slots(city, diameter)
+        empties = [not md.val(r, order_col).strip() for r, _ in slots]   # пусто?
+        whites = [_is_white(md.color(r, order_col)) for r, _ in slots]
+
         free: list[str] = []
-        for r in range(sec_start, sec_end):
-            t = _norm_time(md.val(r, time_col))
-            if not t:
+        n = len(slots)
+        for i, (r, t) in enumerate(slots):
+            if not empties[i]:
                 continue
-            order_text = md.val(r, order_col).strip()
-            white = _is_white(md.color(r, order_col))
-            if order_text or not white:
-                continue  # занято (текст), закрыто (красный) или недоступно (оранжевый)
-            free.append(t)
+            if big:
+                # нужен пустой следующий слот, либо это последний пустой слот дня
+                next_empty = (i + 1 < n) and empties[i + 1]
+                last_free = not any(empties[j] for j in range(i + 1, n))
+                if next_empty or last_free:
+                    free.append(t)
+            else:
+                if whites[i]:  # обычная запись — только белые пустые
+                    free.append(t)
 
         # На сегодня не показывать прошедшее время
         if d == date.today():
-            from datetime import datetime
             now = datetime.now()
             free = [t for t in free
                     if (int(t.split(":")[0]), int(t.split(":")[1])) >= (now.hour, now.minute)]
@@ -262,11 +284,23 @@ class SheetsClient:
 
     @_network_retry
     def write_booking(self, city: config.City, d: date, time: str, data: dict) -> None:
-        """Вписать данные записи прямо в ячейки нужного слота простыни."""
+        """Вписать данные записи в ячейки слота. Большие шины (R20+) в Киеве —
+        в 2 подряд слота (или в 1, если это последний слот дня)."""
         md = self._load_month(d)
-        target_row, start_col = self._slot_row(md, city, d, time)
+        start_col, slots = self._section_slots(md, city, d)
+        want = _norm_time(time)
+        idx = next((i for i, (r, t) in enumerate(slots) if t == want), None)
+        if idx is None:
+            raise SheetError(f"Слот {time} не найден на {d.isoformat()} ({city.title})")
 
         columns = config.LAYOUTS[city.layout]["columns"]
+        order_col = start_col + columns.index("Номер заказа")
+        target_rows = [slots[idx][0]]
+        if config.needs_two_slots(city, data.get("diameter", "")) and idx + 1 < len(slots):
+            nr = slots[idx + 1][0]
+            if not md.val(nr, order_col).strip():  # следующий пуст — занимаем и его
+                target_rows.append(nr)
+
         value_map = {
             "Номер тел.": data.get("phone", ""),
             "Номер заказа": data.get("order_number", ""),
@@ -276,11 +310,12 @@ class SheetsClient:
         }
         ws = self.ss.worksheet(md.title)
         updates = []
-        for name, val in value_map.items():
-            if name in columns and val:
-                c = start_col + columns.index(name)
-                a1 = gspread.utils.rowcol_to_a1(target_row + 1, c + 1)
-                updates.append({"range": a1, "values": [[val]]})
+        for row in target_rows:
+            for name, val in value_map.items():
+                if name in columns and val:
+                    c = start_col + columns.index(name)
+                    a1 = gspread.utils.rowcol_to_a1(row + 1, c + 1)
+                    updates.append({"range": a1, "values": [[val]]})
         if not updates:
             raise SheetError("Нет данных для записи")
         ws.batch_update(updates, value_input_option="USER_ENTERED")
@@ -358,6 +393,11 @@ class SheetsClient:
                     phone = md.val(r, phone_col) if phone_col is not None else ""
                     if not (self._match(order, q) or self._match(phone, q)):
                         continue
+                    # 2-слотовая запись (R20+) = 2 подряд строки с тем же заказом;
+                    # показываем только первую (пропускаем строку-продолжение).
+                    prev_order = md.val(r - 1, order_col).strip() if r > 0 else ""
+                    if order.strip() and prev_order == order.strip():
+                        continue
                     tm = _norm_time(md.val(r, time_col))
                     do = next((dt for (dr, dt) in reversed(date_rows) if dr <= r), None)
                     if tm is None or do is None:
@@ -373,19 +413,33 @@ class SheetsClient:
 
     @_network_retry
     def cancel_booking(self, city: config.City, d: date, time: str) -> None:
-        """Освободить слот: очистить данные записи и залить белым."""
+        """Освободить слот: очистить данные записи (цвет фона не трогаем, чтобы
+        не менять смысл «красное = закрыто»). Для R20+ чистим обе строки."""
         md = self._load_month(d, force=True)
-        row, start_col = self._slot_row(md, city, d, time)
+        start_col, slots = self._section_slots(md, city, d)
+        order_col = start_col + config.column_index(city, "Номер заказа")
+        want = _norm_time(time)
+        idx = next((i for i, (r, t) in enumerate(slots) if t == want), None)
+        if idx is None:
+            raise SheetError(f"Слот {time} не найден на {d.isoformat()} ({city.title})")
+
+        row0 = slots[idx][0]
+        order_val = md.val(row0, order_col).strip()
+        rows = [row0]
+        for j in (idx - 1, idx + 1):  # соседние строки той же 2-слотовой записи
+            if 0 <= j < len(slots) and order_val and md.val(slots[j][0], order_col).strip() == order_val:
+                rows.append(slots[j][0])
+
         cols = config.LAYOUTS[city.layout]["columns"]
         bot_cols = self._bot_cols(cols)
         if not bot_cols:
             return
         first = start_col + cols.index(bot_cols[0])
         last = start_col + cols.index(bot_cols[-1])
-        a1 = f"{gspread.utils.rowcol_to_a1(row + 1, first + 1)}:{gspread.utils.rowcol_to_a1(row + 1, last + 1)}"
+        ranges = [f"{gspread.utils.rowcol_to_a1(r + 1, first + 1)}:"
+                  f"{gspread.utils.rowcol_to_a1(r + 1, last + 1)}" for r in rows]
         ws = self.ss.worksheet(md.title)
-        ws.batch_clear([a1])
-        ws.format(a1, {"backgroundColor": {"red": 1, "green": 1, "blue": 1}})
+        ws.batch_clear(ranges)
         self._month_cache.clear()
 
     def move_booking(self, city: config.City, d: date, time: str,
