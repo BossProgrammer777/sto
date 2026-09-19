@@ -67,6 +67,9 @@ def is_allowed(telegram_id: int) -> bool:
 # ask_fields — какие поля бот спрашивает у оператора и в каком порядке.
 # «МОП Запись» оператор выбирает из списка (поле mop).
 
+# ВНИМАНИЕ: список columns описывает ВСЕ колонки блока по порядку (для точной
+# адресации ячеек), даже те, что бот не заполняет («Ориент. стоимость», «ПРОЗВОН»).
+# ask_fields — только то, что бот реально спрашивает у оператора.
 LAYOUTS: dict[str, dict] = {
     "simple": {
         "columns": ["Время", "Номер заказа", "Диаметр", "МОП Запись", "ПРОЗВОН МОП ШМ"],
@@ -77,7 +80,7 @@ LAYOUTS: dict[str, dict] = {
             "Время", "Номер тел.", "Номер заказа", "Диаметр", "ТИП Авто",
             "МОП Запись", "Ориент. стоимость (4шт)", "ПРОЗВОН МОП ШМ",
         ],
-        "ask_fields": ["phone", "order_number", "diameter", "car_type", "price", "mop"],
+        "ask_fields": ["phone", "order_number", "diameter", "car_type", "mop"],
     },
 }
 
@@ -114,20 +117,22 @@ def column_index(city: City, column_name: str) -> int:
 
 # ─────────────────────────── Поля сбора данных ───────────────────────────
 # kind: text — свободный ввод; choice — выбор из выпадающего списка (кнопки).
+# required: обязательное поле (нельзя пропустить). Обязательны только
+#   номер заказа, телефон и МОП; остальные можно пропустить кнопкой.
+# in_memory: значения берём из константы в памяти, не читая таблицу (быстрее).
 
 FIELDS: dict[str, dict] = {
     "phone":        {"prompt": "📞 Введите номер телефона клиента:", "kind": "text",
-                     "sheet_column": "Номер тел."},
+                     "sheet_column": "Номер тел.", "required": True},
     "order_number": {"prompt": "🧾 Введите номер заказа:", "kind": "text",
-                     "sheet_column": "Номер заказа"},
+                     "sheet_column": "Номер заказа", "required": True},
     "diameter":     {"prompt": "⭕ Выберите диаметр:", "kind": "choice",
-                     "sheet_column": "Диаметр", "validation": "diameter"},
+                     "sheet_column": "Диаметр", "validation": "diameter", "required": False},
     "car_type":     {"prompt": "🚗 Выберите тип авто:", "kind": "choice",
-                     "sheet_column": "ТИП Авто", "validation": "car_type"},
-    "price":        {"prompt": "💵 Введите ориент. стоимость (4 шт):", "kind": "text",
-                     "sheet_column": "Ориент. стоимость (4шт)"},
+                     "sheet_column": "ТИП Авто", "validation": "car_type", "required": False},
     "mop":          {"prompt": "✍️ Кто делает запись (МОП)?", "kind": "choice",
-                     "sheet_column": "МОП Запись", "validation": "mop"},
+                     "sheet_column": "МОП Запись", "validation": "mop",
+                     "required": True, "in_memory": True},
 }
 
 

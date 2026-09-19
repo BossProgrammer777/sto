@@ -261,7 +261,6 @@ class SheetsClient:
             "Диаметр": data.get("diameter", ""),
             "ТИП Авто": data.get("car_type", ""),
             "МОП Запись": data.get("mop", ""),
-            "Ориент. стоимость (4шт)": data.get("price", ""),
         }
         ws = self.ss.worksheet(md.title)
         updates = []

@@ -65,15 +65,17 @@ def _summary_text(ud: dict) -> str:
         f"⏰ Время: <b>{ud['time']}</b>",
     ]
     d = ud["data"]
-    if "phone" in d:
-        lines.append(f"📞 Телефон: <b>{d['phone']}</b>")
-    lines.append(f"🧾 Заказ: <b>{d.get('order_number', '')}</b>")
-    lines.append(f"⭕ Диаметр: <b>{d.get('diameter', '')}</b>")
-    if "car_type" in d:
-        lines.append(f"🚗 Тип авто: <b>{d['car_type']}</b>")
-    if "price" in d:
-        lines.append(f"💵 Стоимость: <b>{d['price']}</b>")
-    lines.append(f"✍️ МОП Запись: <b>{d.get('mop', '')}</b>")
+    # Показываем только заполненные поля (пропущенные не выводим).
+    labels = [
+        ("phone", "📞 Телефон"),
+        ("order_number", "🧾 Заказ"),
+        ("diameter", "⭕ Диаметр"),
+        ("car_type", "🚗 Тип авто"),
+        ("mop", "✍️ МОП Запись"),
+    ]
+    for key, label in labels:
+        if d.get(key):
+            lines.append(f"{label}: <b>{d[key]}</b>")
     return "\n".join(lines)
 
 
@@ -186,19 +188,21 @@ async def _ask_current_field(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
     field = fields[idx]
     meta = config.FIELDS[field]
+    optional = not meta.get("required", False)
     if meta["kind"] == "choice":
-        city: config.City = ud["city"]
-        values = await _run(sheets.read_validation_values, city,
-                            meta["sheet_column"], meta["validation"])
+        if meta.get("in_memory"):
+            values = config.FALLBACK_VALIDATION[meta["validation"]]  # МОП — из памяти
+        else:
+            city: config.City = ud["city"]
+            values = await _run(sheets.read_validation_values, city,
+                                meta["sheet_column"], meta["validation"])
         ud["_choices"] = values
-        await update.message.reply_text(meta["prompt"], reply_markup=kb.choice_kb(values))
+        await update.message.reply_text(
+            meta["prompt"], reply_markup=kb.choice_kb(values, allow_skip=optional))
     else:
-        await update.message.reply_text(meta["prompt"], reply_markup=_text_kb())
+        await update.message.reply_text(
+            meta["prompt"], reply_markup=kb.text_kb(allow_skip=optional))
     return COLLECT
-
-
-def _text_kb() -> ReplyKeyboardMarkup:
-    return ReplyKeyboardMarkup([[kb.BTN_BACK, kb.BTN_CANCEL]], resize_keyboard=True)
 
 
 async def collect(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -220,11 +224,22 @@ async def collect(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     idx = ud["field_idx"]
     field = ud["fields"][idx]
     meta = config.FIELDS[field]
+    optional = not meta.get("required", False)
+
+    # Пропуск необязательного поля.
+    if text == kb.BTN_SKIP:
+        if not optional:
+            await update.message.reply_text("Это поле обязательно, пропустить нельзя.")
+            return COLLECT
+        ud["data"].pop(field, None)
+        ud["field_idx"] += 1
+        return await _ask_current_field(update, context)
 
     if meta["kind"] == "choice":
         if text not in ud.get("_choices", []):
-            await update.message.reply_text("🤔 Выберите значение кнопкой.",
-                                            reply_markup=kb.choice_kb(ud["_choices"]))
+            await update.message.reply_text(
+                "🤔 Выберите значение кнопкой.",
+                reply_markup=kb.choice_kb(ud["_choices"], allow_skip=optional))
             return COLLECT
         ud["data"][field] = text
     else:

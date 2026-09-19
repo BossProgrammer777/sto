@@ -9,6 +9,7 @@ import calendar_utils as cal
 
 BTN_CANCEL = "❌ Отмена"
 BTN_BACK = "⬅️ Назад"
+BTN_SKIP = "⏭ Пропустить"
 
 
 def _chunk(items: list[str], per_row: int) -> list[list[str]]:
@@ -34,8 +35,18 @@ def times_kb(times: list[str]) -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(rows, resize_keyboard=True, one_time_keyboard=True)
 
 
-def choice_kb(values: list[str], per_row: int = 3) -> ReplyKeyboardMarkup:
+def choice_kb(values: list[str], per_row: int = 3, allow_skip: bool = False) -> ReplyKeyboardMarkup:
     rows = _chunk(values, per_row)
+    if allow_skip:
+        rows.append([BTN_SKIP])
+    rows.append([BTN_BACK, BTN_CANCEL])
+    return ReplyKeyboardMarkup(rows, resize_keyboard=True, one_time_keyboard=True)
+
+
+def text_kb(allow_skip: bool = False) -> ReplyKeyboardMarkup:
+    rows = []
+    if allow_skip:
+        rows.append([BTN_SKIP])
     rows.append([BTN_BACK, BTN_CANCEL])
     return ReplyKeyboardMarkup(rows, resize_keyboard=True, one_time_keyboard=True)
 
