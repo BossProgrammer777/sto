@@ -200,8 +200,10 @@ async def _ask_current_field(update: Update, context: ContextTypes.DEFAULT_TYPE)
             values = await _run(sheets.read_validation_values, city,
                                 meta["sheet_column"], meta["validation"])
         ud["_choices"] = values
+        ud["_per_row"] = meta.get("per_row", 3)
         await update.message.reply_text(
-            meta["prompt"], reply_markup=kb.choice_kb(values, allow_skip=optional))
+            meta["prompt"],
+            reply_markup=kb.choice_kb(values, per_row=ud["_per_row"], allow_skip=optional))
     else:
         await update.message.reply_text(
             meta["prompt"], reply_markup=kb.text_kb(allow_skip=optional))
@@ -242,7 +244,8 @@ async def collect(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         if text not in ud.get("_choices", []):
             await update.message.reply_text(
                 "🤔 Выберите значение кнопкой.",
-                reply_markup=kb.choice_kb(ud["_choices"], allow_skip=optional))
+                reply_markup=kb.choice_kb(ud["_choices"], per_row=ud.get("_per_row", 3),
+                                          allow_skip=optional))
             return COLLECT
         ud["data"][field] = text
     else:

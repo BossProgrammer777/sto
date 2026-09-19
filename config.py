@@ -131,7 +131,8 @@ FIELDS: dict[str, dict] = {
     "car_type":     {"prompt": "🚗 Выберите тип авто:", "kind": "choice",
                      "sheet_column": "ТИП Авто", "validation": "car_type", "required": False},
     "mop":          {"prompt": "✍️ Кто делает запись (МОП)?", "kind": "choice",
-                     "sheet_column": "МОП Запись", "validation": "mop", "required": True},
+                     "sheet_column": "МОП Запись", "validation": "mop", "required": True,
+                     "per_row": 4},
 }
 
 
