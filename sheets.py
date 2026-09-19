@@ -108,10 +108,10 @@ class SheetsClient:
     # ───────────────────────── Чтение месячного листа ─────────────────────────
 
     @_network_retry
-    def _load_month(self, d: date) -> MonthData:
+    def _load_month(self, d: date, force: bool = False) -> MonthData:
         name = cal.month_sheet_name(d)
         cached = self._month_cache.get(name)
-        if cached and (_time.time() - cached[0]) < MONTH_CACHE_TTL:
+        if not force and cached and (_time.time() - cached[0]) < MONTH_CACHE_TTL:
             return cached[1]
 
         try:
@@ -204,9 +204,22 @@ class SheetsClient:
 
     # ───────────────────────── Свободные слоты ─────────────────────────
 
+    def prefetch(self, dates: list[date]) -> None:
+        """Прогреть кеш месячных листов для набора дат (фоном, ошибки глушим)."""
+        seen: set[tuple[int, int]] = set()
+        for d in dates:
+            key = (d.year, d.month)
+            if key in seen:
+                continue
+            seen.add(key)
+            try:
+                self._load_month(d)
+            except Exception as e:  # noqa: BLE001
+                log.info("prefetch %s не удался: %s", cal.month_sheet_name(d), e)
+
     @_network_retry
-    def read_free_slots(self, city: config.City, d: date) -> list[str]:
-        md = self._load_month(d)
+    def read_free_slots(self, city: config.City, d: date, force: bool = False) -> list[str]:
+        md = self._load_month(d, force=force)
         width = len(config.LAYOUTS[city.layout]["columns"])
         start_col, _ = self._block_start_col(md, city)
         sec_start, sec_end = self._date_section(md, start_col, width, d)

@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 
 from telegram import Update, ReplyKeyboardMarkup
 from telegram.ext import (
@@ -47,6 +48,14 @@ async def _run(fn, *args):
     return await asyncio.to_thread(fn, *args)
 
 
+async def _warm_cache(dates) -> None:
+    """Фоново прогреть кеш таблицы, чтобы слоты показывались мгновенно."""
+    try:
+        await asyncio.to_thread(sheets.prefetch, dates)
+    except Exception as e:  # noqa: BLE001
+        log.info("Прогрев кеша не удался: %s", e)
+
+
 def _summary_text(ud: dict) -> str:
     city: config.City = ud["city"]
     lines = [
@@ -78,6 +87,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         return ConversationHandler.END
 
     context.user_data.clear()
+    # Сразу фоном прогреваем таблицу: пока оператор жмёт город/дату,
+    # месячный лист уже подгрузится и слоты покажутся мгновенно.
+    asyncio.create_task(_warm_cache(cal.upcoming_dates(config.DAYS_AHEAD)))
     await update.message.reply_text(
         f"👋 Привет, <b>{user.first_name}</b>!\n"
         "Запишем клиента. Выберите город:",
@@ -243,7 +255,7 @@ async def confirm(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     await update.message.reply_text("💾 Сохраняю запись…", reply_markup=kb.remove_kb())
     try:
         # На всякий случай ещё раз проверим, что слот не заняли параллельно.
-        free = await _run(sheets.read_free_slots, city, ud["date"])
+        free = await _run(sheets.read_free_slots, city, ud["date"], True)  # свежее чтение
         if ud["time"] not in free:
             await update.message.reply_text(
                 "😳 Пока вы заполняли, слот заняли. Выберите другое время:",
@@ -284,18 +296,21 @@ async def on_error(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 def build_app() -> Application:
     app = Application.builder().token(config.TELEGRAM_BOT_TOKEN).build()
+    # Отмена должна срабатывать на любом шаге, поэтому ставим её первым
+    # обработчиком в каждом стейте (иначе общий текстовый её перехватит).
+    cancel_h = MessageHandler(filters.Regex(rf"^{re.escape(kb.BTN_CANCEL)}$"), cancel)
     conv = ConversationHandler(
         entry_points=[CommandHandler("start", start)],
         states={
-            SELECT_CITY: [MessageHandler(filters.TEXT & ~filters.COMMAND, select_city)],
-            SELECT_DATE: [MessageHandler(filters.TEXT & ~filters.COMMAND, select_date)],
-            SELECT_TIME: [MessageHandler(filters.TEXT & ~filters.COMMAND, select_time)],
-            COLLECT: [MessageHandler(filters.TEXT & ~filters.COMMAND, collect)],
-            CONFIRM: [MessageHandler(filters.TEXT & ~filters.COMMAND, confirm)],
+            SELECT_CITY: [cancel_h, MessageHandler(filters.TEXT & ~filters.COMMAND, select_city)],
+            SELECT_DATE: [cancel_h, MessageHandler(filters.TEXT & ~filters.COMMAND, select_date)],
+            SELECT_TIME: [cancel_h, MessageHandler(filters.TEXT & ~filters.COMMAND, select_time)],
+            COLLECT: [cancel_h, MessageHandler(filters.TEXT & ~filters.COMMAND, collect)],
+            CONFIRM: [cancel_h, MessageHandler(filters.TEXT & ~filters.COMMAND, confirm)],
         },
         fallbacks=[
             CommandHandler("cancel", cancel),
-            MessageHandler(filters.Regex(f"^{kb.BTN_CANCEL}$"), cancel),
+            MessageHandler(filters.Regex(rf"^{re.escape(kb.BTN_CANCEL)}$"), cancel),
         ],
         allow_reentry=True,
     )
