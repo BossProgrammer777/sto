@@ -16,7 +16,8 @@ def _chunk(items: list[str], per_row: int) -> list[list[str]]:
 
 
 def cities_kb() -> ReplyKeyboardMarkup:
-    rows = _chunk([c.title for c in config.CITIES.values()], 1)
+    # По 2 города в ряд, чтобы все (включая Львов) помещались на один экран.
+    rows = _chunk([c.title for c in config.CITIES.values()], 2)
     rows.append([BTN_CANCEL])
     return ReplyKeyboardMarkup(rows, resize_keyboard=True, one_time_keyboard=True)
 
