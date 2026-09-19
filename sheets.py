@@ -26,7 +26,7 @@ import logging
 import re
 import time as _time
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime
 
 import gspread
 from google.oauth2.service_account import Credentials
@@ -96,6 +96,16 @@ class MonthData:
     @property
     def nrows(self) -> int:
         return len(self.values)
+
+
+@dataclass
+class Booking:
+    """Найденная запись в таблице."""
+    month_title: str
+    city: "config.City"
+    date: date
+    time: str
+    data: dict  # order_number, phone, diameter, car_type, mop
 
 
 class SheetsClient:
@@ -275,6 +285,114 @@ class SheetsClient:
             raise SheetError("Нет данных для записи")
         ws.batch_update(updates, value_input_option="USER_ENTERED")
         self._month_cache.clear()  # слот занят — сбросить кеш доступности
+
+    # ───────────────────────── Поиск / удаление / перенос ─────────────────────────
+
+    def _search_month_dates(self) -> list[date]:
+        """Даты-представители месяцев для поиска: текущий + следующий."""
+        today = date.today()
+        if today.month == 12:
+            nxt = date(today.year + 1, 1, 1)
+        else:
+            nxt = date(today.year, today.month + 1, 1)
+        return [today, nxt]
+
+    def _block_date_rows(self, md: MonthData, start_col: int, width: int) -> list[tuple[int, date]]:
+        """Список (строка_даты, дата) для блока города, сверху вниз."""
+        out: list[tuple[int, date]] = []
+        for r in range(md.nrows):
+            for c in range(start_col, start_col + width):
+                m = _DATE_IN_CELL_RE.search(md.val(r, c))
+                if m:
+                    try:
+                        out.append((r, datetime.strptime(m.group(1), "%d.%m.%Y").date()))
+                    except ValueError:
+                        pass
+                    break
+        return out
+
+    @staticmethod
+    def _match(cell: str, q: str) -> bool:
+        cell = cell.strip()
+        return bool(cell) and (cell == q or (len(q) >= 4 and q in cell))
+
+    def _bot_cols(self, cols: list[str]) -> list[str]:
+        """Колонки, которые бот заполняет/чистит (по порядку)."""
+        return [c for c in ["Номер тел.", "Номер заказа", "Диаметр", "ТИП Авто", "МОП Запись"]
+                if c in cols]
+
+    @_network_retry
+    def search_bookings(self, query: str) -> list[Booking]:
+        """Найти записи по номеру заказа или телефону (текущий + след. месяц)."""
+        q = query.strip()
+        if not q:
+            return []
+        results: list[Booking] = []
+        seen: set[str] = set()
+        for d in self._search_month_dates():
+            name = cal.month_sheet_name(d)
+            if name in seen:
+                continue
+            seen.add(name)
+            try:
+                md = self._load_month(d)
+            except SheetError:
+                continue
+            for city in config.CITIES.values():
+                try:
+                    start_col, _ = self._block_start_col(md, city)
+                except SheetError:
+                    continue
+                cols = config.LAYOUTS[city.layout]["columns"]
+                width = len(cols)
+                order_col = start_col + cols.index("Номер заказа")
+                time_col = start_col + cols.index("Время")
+                phone_col = start_col + cols.index("Номер тел.") if "Номер тел." in cols else None
+                diam_col = start_col + cols.index("Диаметр") if "Диаметр" in cols else None
+                car_col = start_col + cols.index("ТИП Авто") if "ТИП Авто" in cols else None
+                mop_col = start_col + cols.index("МОП Запись") if "МОП Запись" in cols else None
+                date_rows = self._block_date_rows(md, start_col, width)
+
+                for r in range(md.nrows):
+                    order = md.val(r, order_col)
+                    phone = md.val(r, phone_col) if phone_col is not None else ""
+                    if not (self._match(order, q) or self._match(phone, q)):
+                        continue
+                    tm = _norm_time(md.val(r, time_col))
+                    do = next((dt for (dr, dt) in reversed(date_rows) if dr <= r), None)
+                    if tm is None or do is None:
+                        continue
+                    results.append(Booking(md.title, city, do, tm, {
+                        "order_number": order.strip(),
+                        "phone": phone.strip(),
+                        "diameter": md.val(r, diam_col).strip() if diam_col is not None else "",
+                        "car_type": md.val(r, car_col).strip() if car_col is not None else "",
+                        "mop": md.val(r, mop_col).strip() if mop_col is not None else "",
+                    }))
+        return results
+
+    @_network_retry
+    def cancel_booking(self, city: config.City, d: date, time: str) -> None:
+        """Освободить слот: очистить данные записи и залить белым."""
+        md = self._load_month(d, force=True)
+        row, start_col = self._slot_row(md, city, d, time)
+        cols = config.LAYOUTS[city.layout]["columns"]
+        bot_cols = self._bot_cols(cols)
+        if not bot_cols:
+            return
+        first = start_col + cols.index(bot_cols[0])
+        last = start_col + cols.index(bot_cols[-1])
+        a1 = f"{gspread.utils.rowcol_to_a1(row + 1, first + 1)}:{gspread.utils.rowcol_to_a1(row + 1, last + 1)}"
+        ws = self.ss.worksheet(md.title)
+        ws.batch_clear([a1])
+        ws.format(a1, {"backgroundColor": {"red": 1, "green": 1, "blue": 1}})
+        self._month_cache.clear()
+
+    def move_booking(self, city: config.City, d: date, time: str,
+                     new_city: config.City, new_d: date, new_time: str, data: dict) -> None:
+        """Перенести запись: записать в новый слот, затем очистить старый."""
+        self.write_booking(new_city, new_d, new_time, data)
+        self.cancel_booking(city, d, time)
 
     # ───────────────────────── Выпадающие списки ─────────────────────────
 

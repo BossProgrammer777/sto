@@ -31,7 +31,9 @@ logging.basicConfig(
 log = logging.getLogger("shino-bot")
 
 # Стейты диалога
-SELECT_CITY, SELECT_DATE, SELECT_TIME, COLLECT, CONFIRM = range(5)
+(SELECT_CITY, SELECT_DATE, SELECT_TIME, COLLECT, CONFIRM,
+ MENU, SEARCH_QUERY, SEARCH_PICK, ACTION, CONFIRM_DELETE,
+ RS_CITY, RS_DATE, RS_TIME) = range(13)
 
 sheets: SheetsClient  # инициализируется в main()
 
@@ -92,15 +94,34 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         return ConversationHandler.END
 
     context.user_data.clear()
-    # Сразу фоном прогреваем таблицу: пока оператор жмёт город/дату,
+    # Сразу фоном прогреваем таблицу: пока оператор в меню/выбирает город,
     # месячный лист уже подгрузится и слоты покажутся мгновенно.
     asyncio.create_task(_warm_cache(cal.upcoming_dates(config.DAYS_AHEAD)))
     await update.message.reply_text(
-        f"👋 Привет, <b>{user.first_name}</b>!\n"
-        "Запишем клиента. Выберите город:",
-        parse_mode="HTML", reply_markup=kb.cities_kb(),
+        f"👋 Привет, <b>{user.first_name}</b>!\nЧто делаем?",
+        parse_mode="HTML", reply_markup=kb.menu_kb(),
     )
-    return SELECT_CITY
+    return MENU
+
+
+async def _show_menu(update: Update) -> int:
+    await update.message.reply_text("🏠 Меню. Что делаем?", reply_markup=kb.menu_kb())
+    return MENU
+
+
+async def menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    text = update.message.text.strip()
+    if text == kb.BTN_NEW:
+        context.user_data.clear()
+        await update.message.reply_text("🏙 Выберите город:", reply_markup=kb.cities_kb())
+        return SELECT_CITY
+    if text == kb.BTN_FIND:
+        await update.message.reply_text(
+            "🔍 Введите <b>номер заказа</b> или <b>номер телефона</b> клиента:",
+            parse_mode="HTML", reply_markup=kb.search_prompt_kb())
+        return SEARCH_QUERY
+    await update.message.reply_text("Выберите действие кнопкой.", reply_markup=kb.menu_kb())
+    return MENU
 
 
 async def select_city(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -311,6 +332,217 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     return ConversationHandler.END
 
 
+# ───────────────── Поиск / удаление / перенос записи ─────────────────
+
+def _booking_label(b) -> str:
+    return f"{cal.date_button(b.date)} {b.time} — {b.city.title}"
+
+
+def _booking_text(b) -> str:
+    lines = [
+        "📋 <b>Найдена запись:</b>",
+        f"🏙 Город: <b>{b.city.title}</b>",
+        f"📅 Дата: <b>{cal.date_label(b.date)}</b>",
+        f"⏰ Время: <b>{b.time}</b>",
+    ]
+    d = b.data
+    for key, label in [("phone", "📞 Телефон"), ("order_number", "🧾 Заказ"),
+                       ("diameter", "⭕ Диаметр"), ("car_type", "🚗 Тип авто"),
+                       ("mop", "✍️ МОП Запись")]:
+        if d.get(key):
+            lines.append(f"{label}: <b>{d[key]}</b>")
+    return "\n".join(lines)
+
+
+async def _show_actions(update: Update, b) -> int:
+    await update.message.reply_text(
+        _booking_text(b) + "\n\nЧто сделать с записью?",
+        parse_mode="HTML", reply_markup=kb.actions_kb())
+    return ACTION
+
+
+async def search_query(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    text = update.message.text.strip()
+    if text == kb.BTN_MENU:
+        return await _show_menu(update)
+
+    await update.message.reply_text("🔍 Ищу запись…")
+    try:
+        matches = await _run(sheets.search_bookings, text)
+    except Exception as e:  # noqa: BLE001
+        log.exception("Ошибка поиска")
+        await update.message.reply_text(f"⚠️ Ошибка поиска: {e}",
+                                        reply_markup=kb.search_prompt_kb())
+        return SEARCH_QUERY
+
+    if not matches:
+        await update.message.reply_text(
+            f"😔 По «{text}» ничего не найдено (ищу в текущем и следующем месяце).\n"
+            "Проверьте номер и попробуйте снова:", reply_markup=kb.search_prompt_kb())
+        return SEARCH_QUERY
+
+    context.user_data["matches"] = matches
+    if len(matches) == 1:
+        context.user_data["selected"] = matches[0]
+        return await _show_actions(update, matches[0])
+
+    labels = [_booking_label(b) for b in matches]
+    context.user_data["match_labels"] = labels
+    await update.message.reply_text(
+        f"Найдено записей: <b>{len(matches)}</b>. Выберите нужную:",
+        parse_mode="HTML", reply_markup=kb.matches_kb(labels))
+    return SEARCH_PICK
+
+
+async def search_pick(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    text = update.message.text.strip()
+    if text == kb.BTN_MENU:
+        return await _show_menu(update)
+    labels = context.user_data.get("match_labels", [])
+    if text not in labels:
+        await update.message.reply_text("Выберите запись кнопкой.",
+                                        reply_markup=kb.matches_kb(labels))
+        return SEARCH_PICK
+    b = context.user_data["matches"][labels.index(text)]
+    context.user_data["selected"] = b
+    return await _show_actions(update, b)
+
+
+async def action(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    text = update.message.text.strip()
+    if text == kb.BTN_MENU:
+        return await _show_menu(update)
+    b = context.user_data.get("selected")
+    if b is None:
+        return await _show_menu(update)
+
+    if text == kb.BTN_DELETE:
+        await update.message.reply_text(
+            "🗑 Удалить эту запись и освободить слот?",
+            reply_markup=kb.confirm_delete_kb())
+        return CONFIRM_DELETE
+    if text == kb.BTN_MOVE:
+        await update.message.reply_text(
+            "🔁 Перенос. Выберите город нового слота:", reply_markup=kb.cities_kb())
+        return RS_CITY
+    await update.message.reply_text("Выберите действие кнопкой.", reply_markup=kb.actions_kb())
+    return ACTION
+
+
+async def confirm_delete(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    text = update.message.text.strip()
+    b = context.user_data.get("selected")
+    if text == kb.BTN_BACK or b is None:
+        if b is None:
+            return await _show_menu(update)
+        return await _show_actions(update, b)
+    if text != kb.BTN_YES_DELETE:
+        await update.message.reply_text("Нажмите «✅ Да, удалить» или «⬅️ Назад».",
+                                        reply_markup=kb.confirm_delete_kb())
+        return CONFIRM_DELETE
+
+    await update.message.reply_text("🗑 Удаляю…", reply_markup=kb.remove_kb())
+    try:
+        await _run(sheets.cancel_booking, b.city, b.date, b.time)
+    except Exception as e:  # noqa: BLE001
+        log.exception("Ошибка удаления")
+        await update.message.reply_text(f"⚠️ Не удалось удалить: {e}")
+        return await _show_menu(update)
+    await update.message.reply_text(
+        f"✅ Запись удалена, слот освобождён:\n{_booking_label(b)}")
+    return await _show_menu(update)
+
+
+# ── Перенос: выбор нового города → даты → времени ──
+
+async def rs_city(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    text = update.message.text.strip()
+    if text == kb.BTN_MENU:
+        return await _show_menu(update)
+    city = config.city_by_title(text)
+    if city is None:
+        await update.message.reply_text("🤔 Выберите город кнопкой.", reply_markup=kb.cities_kb())
+        return RS_CITY
+    context.user_data["rs_city"] = city
+    dates = cal.upcoming_dates(config.DAYS_AHEAD)
+    context.user_data["rs_dates"] = dates
+    await update.message.reply_text(
+        f"🏙 <b>{city.title}</b>\n📅 Новая дата:", parse_mode="HTML",
+        reply_markup=kb.dates_kb(dates))
+    return RS_DATE
+
+
+async def rs_date(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    text = update.message.text.strip()
+    if text == kb.BTN_BACK:
+        await update.message.reply_text("🏙 Выберите город:", reply_markup=kb.cities_kb())
+        return RS_CITY
+    d = cal.parse_date_button(text, context.user_data["rs_dates"])
+    if d is None:
+        await update.message.reply_text("🤔 Выберите дату кнопкой.",
+                                        reply_markup=kb.dates_kb(context.user_data["rs_dates"]))
+        return RS_DATE
+    context.user_data["rs_date"] = d
+    city = context.user_data["rs_city"]
+    await update.message.reply_text("⏳ Читаю свободные слоты…")
+    try:
+        free = await _run(sheets.read_free_slots, city, d)
+    except SheetError as e:
+        await update.message.reply_text(f"⚠️ {e}\nВыберите другую дату:",
+                                        reply_markup=kb.dates_kb(context.user_data["rs_dates"]))
+        return RS_DATE
+    if not free:
+        await update.message.reply_text("😔 Свободных слотов нет. Другую дату:",
+                                        reply_markup=kb.dates_kb(context.user_data["rs_dates"]))
+        return RS_DATE
+    context.user_data["rs_free"] = free
+    await update.message.reply_text(
+        f"⏰ Свободное время на <b>{cal.date_label(d)}</b>:",
+        parse_mode="HTML", reply_markup=kb.times_kb(free))
+    return RS_TIME
+
+
+async def rs_time(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    text = update.message.text.strip()
+    ud = context.user_data
+    if text == kb.BTN_BACK:
+        await update.message.reply_text("📅 Новая дата:",
+                                        reply_markup=kb.dates_kb(ud["rs_dates"]))
+        return RS_DATE
+    if text not in ud.get("rs_free", []):
+        await update.message.reply_text("🤔 Выберите время кнопкой.",
+                                        reply_markup=kb.times_kb(ud["rs_free"]))
+        return RS_TIME
+
+    b = ud["selected"]
+    new_city, new_d, new_time = ud["rs_city"], ud["rs_date"], text
+    if (new_city.key, new_d, new_time) == (b.city.key, b.date, b.time):
+        await update.message.reply_text("Это тот же слот — перенос не нужен.")
+        return await _show_actions(update, b)
+
+    await update.message.reply_text("🔁 Переношу…", reply_markup=kb.remove_kb())
+    try:
+        free = await _run(sheets.read_free_slots, new_city, new_d, True)  # свежее
+        if new_time not in free:
+            await update.message.reply_text("😳 Слот уже заняли. Выберите другое время:",
+                                            reply_markup=kb.times_kb(free))
+            ud["rs_free"] = free
+            return RS_TIME
+        await _run(sheets.move_booking, b.city, b.date, b.time,
+                   new_city, new_d, new_time, b.data)
+    except Exception as e:  # noqa: BLE001
+        log.exception("Ошибка переноса")
+        await update.message.reply_text(f"⚠️ Не удалось перенести: {e}")
+        return await _show_menu(update)
+
+    await update.message.reply_text(
+        "✅ <b>Перенесено!</b>\n"
+        f"Было: {_booking_label(b)}\n"
+        f"Стало: {cal.date_button(new_d)} {new_time} — {new_city.title}",
+        parse_mode="HTML")
+    return await _show_menu(update)
+
+
 async def on_error(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
     log.exception("Ошибка в обработчике", exc_info=context.error)
 
@@ -323,11 +555,19 @@ def build_app() -> Application:
     conv = ConversationHandler(
         entry_points=[CommandHandler("start", start)],
         states={
+            MENU: [cancel_h, MessageHandler(filters.TEXT & ~filters.COMMAND, menu)],
             SELECT_CITY: [cancel_h, MessageHandler(filters.TEXT & ~filters.COMMAND, select_city)],
             SELECT_DATE: [cancel_h, MessageHandler(filters.TEXT & ~filters.COMMAND, select_date)],
             SELECT_TIME: [cancel_h, MessageHandler(filters.TEXT & ~filters.COMMAND, select_time)],
             COLLECT: [cancel_h, MessageHandler(filters.TEXT & ~filters.COMMAND, collect)],
             CONFIRM: [cancel_h, MessageHandler(filters.TEXT & ~filters.COMMAND, confirm)],
+            SEARCH_QUERY: [cancel_h, MessageHandler(filters.TEXT & ~filters.COMMAND, search_query)],
+            SEARCH_PICK: [cancel_h, MessageHandler(filters.TEXT & ~filters.COMMAND, search_pick)],
+            ACTION: [cancel_h, MessageHandler(filters.TEXT & ~filters.COMMAND, action)],
+            CONFIRM_DELETE: [cancel_h, MessageHandler(filters.TEXT & ~filters.COMMAND, confirm_delete)],
+            RS_CITY: [cancel_h, MessageHandler(filters.TEXT & ~filters.COMMAND, rs_city)],
+            RS_DATE: [cancel_h, MessageHandler(filters.TEXT & ~filters.COMMAND, rs_date)],
+            RS_TIME: [cancel_h, MessageHandler(filters.TEXT & ~filters.COMMAND, rs_time)],
         },
         fallbacks=[
             CommandHandler("cancel", cancel),

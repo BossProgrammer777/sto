@@ -10,6 +10,12 @@ import calendar_utils as cal
 BTN_CANCEL = "❌ Отмена"
 BTN_BACK = "⬅️ Назад"
 BTN_SKIP = "⏭ Пропустить"
+BTN_NEW = "➕ Новая запись"
+BTN_FIND = "🔍 Найти / изменить запись"
+BTN_DELETE = "🗑 Удалить запись"
+BTN_MOVE = "🔁 Перенести"
+BTN_MENU = "⬅️ В меню"
+BTN_YES_DELETE = "✅ Да, удалить"
 
 
 def _chunk(items: list[str], per_row: int) -> list[list[str]]:
@@ -60,3 +66,30 @@ def confirm_kb() -> ReplyKeyboardMarkup:
 
 def remove_kb() -> ReplyKeyboardRemove:
     return ReplyKeyboardRemove()
+
+
+# ── Меню и поиск/изменение записи ──
+
+def menu_kb() -> ReplyKeyboardMarkup:
+    return ReplyKeyboardMarkup([[BTN_NEW], [BTN_FIND]],
+                               resize_keyboard=True, one_time_keyboard=True)
+
+
+def search_prompt_kb() -> ReplyKeyboardMarkup:
+    return ReplyKeyboardMarkup([[BTN_MENU], [BTN_CANCEL]], resize_keyboard=True)
+
+
+def matches_kb(labels: list[str]) -> ReplyKeyboardMarkup:
+    rows = [[lbl] for lbl in labels]
+    rows.append([BTN_MENU, BTN_CANCEL])
+    return ReplyKeyboardMarkup(rows, resize_keyboard=True, one_time_keyboard=True)
+
+
+def actions_kb() -> ReplyKeyboardMarkup:
+    return ReplyKeyboardMarkup([[BTN_DELETE], [BTN_MOVE], [BTN_MENU]],
+                               resize_keyboard=True, one_time_keyboard=True)
+
+
+def confirm_delete_kb() -> ReplyKeyboardMarkup:
+    return ReplyKeyboardMarkup([[BTN_YES_DELETE], [BTN_BACK]],
+                               resize_keyboard=True, one_time_keyboard=True)
