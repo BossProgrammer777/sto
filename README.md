@@ -32,7 +32,7 @@ Telegram-бот для операторов сети шиномонтажей. �
 | `TELEGRAM_BOT_TOKEN` | токен бота от @BotFather |
 | `SPREADSHEET_ID` | ID Google-таблицы |
 | `GOOGLE_CREDENTIALS_JSON` | JSON-ключ сервисного аккаунта (целиком) |
-| `ALLOWED_OPERATOR_IDS` | Telegram ID операторов через запятую (whitelist) |
+| `ALLOWED_OPERATOR_IDS` | Telegram ID операторов через запятую (whitelist). Пусто = доступ открыт всем |
 | `DAYS_AHEAD` | на сколько дней вперёд показывать даты |
 
 ## Запуск локально

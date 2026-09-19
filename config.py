@@ -47,6 +47,10 @@ ALLOWED_OPERATOR_IDS: set[int] = _load_allowed_ids()
 
 
 def is_allowed(telegram_id: int) -> bool:
+    # Пустой whitelist = доступ открыт всем (временный режим; впишите ID —
+    # и доступ станет ограниченным).
+    if not ALLOWED_OPERATOR_IDS:
+        return True
     return telegram_id in ALLOWED_OPERATOR_IDS
 
 
