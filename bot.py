@@ -93,7 +93,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     context.user_data.clear()
     # Сразу фоном прогреваем таблицу: пока оператор в меню/выбирает город,
     # месячный лист уже подгрузится и слоты покажутся мгновенно.
-    asyncio.create_task(_warm_cache(cal.upcoming_dates(config.DAYS_AHEAD)))
+    asyncio.create_task(_warm_cache(cal.dates_through_month_end(config.MONTHS_AHEAD)))
     await update.message.reply_text(
         f"👋 Привет, <b>{user.first_name}</b>!\nЧто делаем?",
         parse_mode="HTML", reply_markup=kb.menu_kb(),
@@ -128,7 +128,7 @@ async def select_city(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
         return SELECT_CITY
 
     context.user_data["city"] = city
-    dates = await _run(sheets.available_dates, config.DAYS_AHEAD)
+    dates = await _run(sheets.available_dates)
     context.user_data["dates"] = dates
     await update.message.reply_text(
         f"🏙 <b>{city.title}</b>\n📅 Выберите дату:",
@@ -493,7 +493,7 @@ async def rs_city(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         await update.message.reply_text("🤔 Выберите город кнопкой.", reply_markup=kb.cities_kb())
         return RS_CITY
     context.user_data["rs_city"] = city
-    dates = await _run(sheets.available_dates, config.DAYS_AHEAD)
+    dates = await _run(sheets.available_dates)
     context.user_data["rs_dates"] = dates
     await update.message.reply_text(
         f"🏙 <b>{city.title}</b>\n📅 Новая дата:", parse_mode="HTML",

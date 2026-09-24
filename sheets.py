@@ -142,16 +142,17 @@ class SheetsClient:
         self._titles_cache = (_time.time(), titles)
         return titles
 
-    def available_dates(self, days_ahead: int) -> list[date]:
-        """Ближайшие даты, для которых месячный лист уже существует."""
+    def available_dates(self) -> list[date]:
+        """Даты до конца месяца(ев), для которых месячный лист уже существует."""
+        candidates = cal.dates_through_month_end(config.MONTHS_AHEAD)
         try:
             titles = self._sheet_titles()
         except Exception as e:  # noqa: BLE001
             log.warning("Не удалось получить список листов: %s", e)
-            return cal.upcoming_dates(days_ahead)  # не блокируем работу
-        dates = [d for d in cal.upcoming_dates(days_ahead)
-                 if cal.month_sheet_name(d) in titles]
-        return dates or cal.upcoming_dates(days_ahead)
+            return candidates  # не блокируем работу
+        dates = [d for d in candidates if cal.month_sheet_name(d) in titles]
+        # если ни один лист не совпал — показываем хотя бы текущий месяц
+        return dates or cal.dates_through_month_end(0)
 
     # ───────────────────────── Чтение месячного листа ─────────────────────────
 

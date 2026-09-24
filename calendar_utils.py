@@ -42,6 +42,18 @@ def upcoming_dates(days_ahead: int, start: date | None = None) -> list[date]:
     return [start + timedelta(days=i) for i in range(days_ahead)]
 
 
+def dates_through_month_end(months_ahead: int = 1, start: date | None = None) -> list[date]:
+    """Даты от сегодня до конца месяца (текущего при 0, следующего при 1 и т.д.)."""
+    start = start or date.today()
+    total = (start.month - 1) + months_ahead
+    y = start.year + total // 12
+    m = total % 12 + 1
+    after = date(y + 1, 1, 1) if m == 12 else date(y, m + 1, 1)
+    end = after - timedelta(days=1)
+    n = (end - start).days + 1
+    return [start + timedelta(days=i) for i in range(max(n, 0))]
+
+
 def parse_date_button(label: str, candidates: list[date]) -> date | None:
     """Вернуть дату из candidates, соответствующую нажатой кнопке."""
     for d in candidates:

@@ -29,7 +29,10 @@ def _get(name: str, default: str | None = None, required: bool = False) -> str:
 TELEGRAM_BOT_TOKEN = _get("TELEGRAM_BOT_TOKEN", required=True)
 SPREADSHEET_ID = _get("SPREADSHEET_ID", required=True)
 GOOGLE_CREDENTIALS_JSON = _get("GOOGLE_CREDENTIALS_JSON", required=True)
-DAYS_AHEAD = int(_get("DAYS_AHEAD", "14"))
+# На сколько месяцев вперёд показывать даты (0 = только текущий месяц,
+# 1 = до конца следующего месяца). Реально показываются лишь даты,
+# для которых уже существует месячный лист.
+MONTHS_AHEAD = int(_get("MONTHS_AHEAD", "1"))
 
 
 def _load_allowed_ids() -> set[int]:
