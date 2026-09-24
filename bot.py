@@ -128,7 +128,7 @@ async def select_city(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
         return SELECT_CITY
 
     context.user_data["city"] = city
-    dates = cal.upcoming_dates(config.DAYS_AHEAD)
+    dates = await _run(sheets.available_dates, config.DAYS_AHEAD)
     context.user_data["dates"] = dates
     await update.message.reply_text(
         f"🏙 <b>{city.title}</b>\n📅 Выберите дату:",
@@ -493,7 +493,7 @@ async def rs_city(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         await update.message.reply_text("🤔 Выберите город кнопкой.", reply_markup=kb.cities_kb())
         return RS_CITY
     context.user_data["rs_city"] = city
-    dates = cal.upcoming_dates(config.DAYS_AHEAD)
+    dates = await _run(sheets.available_dates, config.DAYS_AHEAD)
     context.user_data["rs_dates"] = dates
     await update.message.reply_text(
         f"🏙 <b>{city.title}</b>\n📅 Новая дата:", parse_mode="HTML",

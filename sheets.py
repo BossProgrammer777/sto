@@ -44,6 +44,7 @@ _DATE_IN_CELL_RE = re.compile(r"\b(\d{2}\.\d{2}\.\d{4})\b")
 
 MONTH_CACHE_TTL = 45      # сек — кеш прочитанного месячного листа (значения+цвета)
 VAL_CACHE_TTL = 6 * 3600  # сек — кеш значений выпадающих списков (меняются редко)
+TITLES_CACHE_TTL = 300    # сек — кеш списка листов (чтобы замечать новый месяц)
 
 
 class SheetError(Exception):
@@ -126,6 +127,31 @@ class SheetsClient:
         self.ss = self.gc.open_by_key(config.SPREADSHEET_ID)
         self._month_cache: dict[str, tuple[float, MonthData]] = {}
         self._val_cache: dict[str, tuple[float, list[str]]] = {}
+        self._titles_cache: tuple[float, set[str]] | None = None
+
+    # ───────────────────────── Листы месяцев ─────────────────────────
+
+    @_network_retry
+    def _sheet_titles(self) -> set[str]:
+        """Названия всех листов таблицы (кеш ~5 мин). Так бот сам «видит»
+        новый месячный лист, как только его добавили."""
+        if self._titles_cache and (_time.time() - self._titles_cache[0]) < TITLES_CACHE_TTL:
+            return self._titles_cache[1]
+        meta = self.ss.fetch_sheet_metadata({"fields": "sheets(properties(title))"})
+        titles = {s["properties"]["title"] for s in meta.get("sheets", [])}
+        self._titles_cache = (_time.time(), titles)
+        return titles
+
+    def available_dates(self, days_ahead: int) -> list[date]:
+        """Ближайшие даты, для которых месячный лист уже существует."""
+        try:
+            titles = self._sheet_titles()
+        except Exception as e:  # noqa: BLE001
+            log.warning("Не удалось получить список листов: %s", e)
+            return cal.upcoming_dates(days_ahead)  # не блокируем работу
+        dates = [d for d in cal.upcoming_dates(days_ahead)
+                 if cal.month_sheet_name(d) in titles]
+        return dates or cal.upcoming_dates(days_ahead)
 
     # ───────────────────────── Чтение месячного листа ─────────────────────────
 
