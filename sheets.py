@@ -313,11 +313,35 @@ class SheetsClient:
                 free.append(t)
 
         # На сегодня не показывать прошедшее время
-        if d == date.today():
-            now = datetime.now()
+        if d == cal.today():
+            now = cal.now()
             free = [t for t in free
                     if (int(t.split(":")[0]), int(t.split(":")[1])) >= (now.hour, now.minute)]
         return free
+
+    # ───────────────────────── Расписание для сайта (только чтение) ─────────────────────────
+
+    def day_grid(self, city: config.City, d: date) -> list[dict]:
+        """Сетка дня без персональных данных: [{t, c: W|O|R, b: занято?}]."""
+        md = self._load_month(d)
+        start_col, slots = self._section_slots(md, city, d)
+        order_col = start_col + config.column_index(city, "Номер заказа")
+        out = []
+        for r, t in slots:
+            color = md.color(r, order_col)
+            c = "W" if _is_white(color) else ("R" if _is_red(color) else "O")
+            out.append({"t": t, "c": c, "b": bool(md.val(r, order_col).strip())})
+        return out
+
+    def days_for_city(self, city: config.City) -> dict[str, list[dict]]:
+        """Сетки всех доступных дат города (до конца следующего месяца)."""
+        out: dict[str, list[dict]] = {}
+        for d in self.available_dates():
+            try:
+                out[d.isoformat()] = self.day_grid(city, d)
+            except SheetError:
+                continue  # дата не найдена на листе — пропускаем
+        return out
 
     # ───────────────────────── Запись в грид (подход А) ─────────────────────────
 
@@ -365,7 +389,7 @@ class SheetsClient:
 
     def _search_month_dates(self) -> list[date]:
         """Даты-представители месяцев для поиска: текущий + следующий."""
-        today = date.today()
+        today = cal.today()
         if today.month == 12:
             nxt = date(today.year + 1, 1, 1)
         else:
@@ -520,10 +544,10 @@ class SheetsClient:
         if cached and (_time.time() - cached[0]) < VAL_CACHE_TTL:
             return cached[1]
         try:
-            md = self._load_month(date.today())
+            md = self._load_month(cal.today())
             width = len(config.LAYOUTS[city.layout]["columns"])
             start_col, _ = self._block_start_col(md, city)
-            sec_start, sec_end = self._date_section(md, start_col, width, date.today())
+            sec_start, sec_end = self._date_section(md, start_col, width, cal.today())
             time_col = start_col + config.column_index(city, "Время")
             col = start_col + config.column_index(city, column_name)
 

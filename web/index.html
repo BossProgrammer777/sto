@@ -104,6 +104,9 @@
   .back:hover { text-decoration: underline; }
   .demo-note { margin: 18px 0 0; background: #fff8e1; border: 1px solid #f3d98b; color: #6b5512; border-radius: 8px; padding: 10px 14px; font-size: 14px; line-height: 1.45; }
   .demo-note button { border: 0; background: none; color: var(--link); text-decoration: underline; cursor: pointer; font-size: 14px; padding: 0; }
+  .demo-note.live { background: #ecf8ee; border-color: #b7e0bd; color: #24592c; }
+  .demo-note.err { background: #fdeeee; border-color: #f1b9b9; color: #8a2323; }
+  .flash { color: var(--red); font-weight: 500; }
 
   .steps { display: grid; grid-template-columns: minmax(0, 1.05fr) minmax(0, 1fr) minmax(0, 1.15fr); gap: 44px; margin-top: 26px; }
   .step h3 { font-size: 26px; font-weight: 400; margin: 0 0 16px; color: #333; }
@@ -351,12 +354,7 @@
       <h1 class="bk-title">Онлайн-запис на шиномонтаж</h1>
       <a class="back" href="#" data-route="main">← До сторінки «Шиномонтаж»</a>
     </div>
-    <div class="demo-note">
-      <b>Демо-версія для презентації.</b> Розклад згенеровано автоматично за тими ж правилами, що й у боті:
-      вільний час — лише білі порожні слоти; оранжеві/червоні не пропонуються; R20 і більше у Києві займають 2 слоти поспіль.
-      У робочій версії розклад братиметься з таблиці «Запис на Шиномонтаж 2026».
-      <button type="button" id="resetDemo">Скинути демо-записи</button>
-    </div>
+    <div class="demo-note" id="modeNote"><span id="modeText"></span> <button type="button" id="resetDemo">Скинути демо-записи</button></div>
 
     <div class="steps">
       <div class="step">
@@ -421,7 +419,7 @@
     <div class="ok">✓</div>
     <h2 id="mTitle">Вас записано!</h2>
     <dl id="mDetails"></dl>
-    <p>Менеджер зателефонує для підтвердження запису.<br><span style="color:#b08a1e">Демо: запис збережено лише у вашому браузері.</span></p>
+    <p>Менеджер зателефонує для підтвердження запису.<br><span style="color:#b08a1e" id="mDemoText">Демо: запис збережено лише у вашому браузері.</span></p>
     <button class="cta" id="mClose" type="button">Готово</button>
   </div>
 </div>
@@ -441,6 +439,12 @@
   const TWO_POST_CITIES = ["kyiv"];          // де R20+ займає 2 слоти
   const BIG_DIAMETERS = ["R20", "R21", "R22"];
   const MONTHS_AHEAD = 1;                    // до кінця наступного місяця
+  // Адреса API бота на Railway. Порожньо — демо-режим (розклад генерується).
+  // Можна також відкрити сторінку як index.html?api=https://<домен>.up.railway.app
+  const API_URL_DEFAULT = "";
+  const API_URL = (new URLSearchParams(location.search).get("api") || API_URL_DEFAULT).trim().replace(/\/+$/, "");
+  const LIVE = API_URL !== "";
+  const LIVE_TTL = 30 * 1000;                // як часто перечитувати розклад з таблиці
   const DIAMETERS = [
     ["R13","R13"],["R14","R14"],["R15","R15"],["R16","R16"],["R17","R17"],["R18","R18"],
     ["R19","R19"],["R20","R20"],["R21","R21"],["R22","R22"],["РОЗВАЛ","Розвал-сходження"],["СТО","СТО"],["","Не знаю"],
@@ -505,10 +509,42 @@
     return s;
   }
 
+  // ───────────────── Живий розклад з таблиці (через API бота) ─────────────────
+  const live = {}; // cityKey -> { at, updated, days, loading, error }
+
+  async function ensureLive(cityKey, force = false) {
+    if (!LIVE) return;
+    const cur = live[cityKey] || (live[cityKey] = {});
+    if (!force && cur.days && Date.now() - cur.at < LIVE_TTL) return;
+    if (cur.loading) return cur.loading;
+    cur.error = null;
+    cur.loading = (async () => {
+      try {
+        const r = await fetch(`${API_URL}/api/days?city=${encodeURIComponent(cityKey)}`, { cache: "no-store" });
+        if (!r.ok) throw new Error("HTTP " + r.status);
+        const data = await r.json();
+        Object.assign(cur, { days: data.days || {}, updated: data.updated, at: Date.now() });
+      } catch (e) {
+        cur.error = String(e.message || e);
+      } finally {
+        cur.loading = null;
+      }
+    })();
+    renderAll();
+    await cur.loading;
+    renderAll();
+  }
+
   function getDay(cityKey, d) {
-    const key = cityKey + "|" + ymd(d);
-    if (!dayCache.has(key)) dayCache.set(key, genDay(cityKey, d));
-    const base = dayCache.get(key).map((x) => ({ ...x }));
+    let base;
+    if (LIVE) {
+      const arr = live[cityKey] && live[cityKey].days && live[cityKey].days[ymd(d)];
+      base = arr ? arr.map((x) => ({ t: x.t, color: x.c, booked: x.b })) : [];
+    } else {
+      const key = cityKey + "|" + ymd(d);
+      if (!dayCache.has(key)) dayCache.set(key, genDay(cityKey, d));
+      base = dayCache.get(key).map((x) => ({ ...x }));
+    }
     for (const b of demoBookings) {
       if (b.city !== cityKey || b.date !== ymd(d)) continue;
       for (const t of b.times) { const slot = base.find((x) => x.t === t); if (slot) slot.booked = true; }
@@ -651,7 +687,8 @@
     });
     cal.querySelectorAll("[data-date]").forEach((b) => b.addEventListener("click", () => {
       const [y, m, dd] = b.dataset.date.split("-").map(Number);
-      state.date = new Date(y, m - 1, dd); state.time = null; renderAll();
+      state.date = new Date(y, m - 1, dd); state.time = null; state.flash = ""; renderAll();
+      ensureLive(state.city); // перечитати, якщо розклад старший за 30 с
     }));
   }
 
@@ -669,10 +706,36 @@
     $("#bigHint").hidden = !needsTwoSlots(state.city, state.diam);
   }
 
+  function renderModeNote() {
+    const note = $("#modeNote"), text = $("#modeText");
+    note.classList.remove("live", "err");
+    if (!LIVE) {
+      text.innerHTML = `<b>Демо-версія для презентації.</b> Розклад згенеровано автоматично за тими ж правилами, що й у боті:
+        вільний час — лише білі порожні слоти; оранжеві/червоні не пропонуються; R20 і більше у Києві займають 2 слоти поспіль.
+        У робочій версії розклад братиметься з таблиці «Запис на Шиномонтаж 2026».`;
+      $("#mDemoText").textContent = "Демо: запис збережено лише у вашому браузері.";
+      return;
+    }
+    const L = live[state.city] || {};
+    if (L.error && !L.days) {
+      note.classList.add("err");
+      text.innerHTML = `<b>Не вдалося завантажити розклад з таблиці</b> (${escapeHtml(L.error)}). Перевірте з'єднання й оновіть сторінку.`;
+    } else {
+      note.classList.add("live");
+      const at = L.at ? new Date(L.at).toLocaleTimeString("uk-UA", { hour: "2-digit", minute: "2-digit", second: "2-digit" }) : "…";
+      text.innerHTML = `<b>Розклад синхронізовано з таблицею «Запис на Шиномонтаж 2026»</b> — оновлено о ${at}, перечитується кожні 30 с.
+        Запис із сайту поки демонстраційний: у таблицю не потрапляє.`;
+    }
+    $("#mDemoText").textContent = "Демо: розклад справжній, але в таблицю запис із сайту поки не надсилається.";
+  }
+
   function renderTimes() {
     const box = $("#times");
     box.innerHTML = "";
-    if (!state.date) { box.className = "times"; box.innerHTML = `<div class="empty" style="grid-column:1/-1">Оберіть дату в календарі.</div>`; return; }
+    const L = LIVE ? (live[state.city] || {}) : {};
+    if (LIVE && !L.days && (L.loading || !L.error)) { box.className = "times"; box.innerHTML = `<div class="empty" style="grid-column:1/-1">⏳ Завантажую розклад з таблиці…</div>`; return; }
+    if (LIVE && !L.days && L.error) { box.className = "times"; box.innerHTML = `<div class="empty" style="grid-column:1/-1">Розклад недоступний. <button type="button" class="chip" id="retryLive">Спробувати ще раз</button></div>`; $("#retryLive").addEventListener("click", () => ensureLive(state.city, true)); return; }
+    if (!state.date) { box.className = "times"; box.innerHTML = `<div class="empty" style="grid-column:1/-1">${LIVE ? "Немає вільних дат у таблиці." : "Оберіть дату в календарі."}</div>`; return; }
     const slots = freeSlots(state.city, state.date, state.diam || "");
     const big = needsTwoSlots(state.city, state.diam);
     box.className = "times" + (big ? " wide" : "");
@@ -686,7 +749,7 @@
       b.type = "button";
       b.className = "tpill" + (state.time === s.t ? " sel" : "");
       b.textContent = slotRange(s);
-      b.addEventListener("click", () => { state.time = s.t; renderTimes(); renderSummary(); });
+      b.addEventListener("click", () => { state.time = s.t; state.flash = ""; renderTimes(); renderSummary(); });
       box.appendChild(b);
     }
   }
@@ -713,30 +776,44 @@
     parts.push(state.date ? dayLabel(state.date) : `<span style="color:#aaa">дата</span>`);
     parts.push(slot ? `<b>${slotRange(slot)}</b>${slot.two ? " (2 слоти)" : ""}` : `<span style="color:#aaa">час</span>`);
     parts.push(diamLabel ? diamLabel : `<span style="color:#aaa">діаметр</span>`);
-    $("#summary").innerHTML = "Ваш запис: " + parts.join(" · ");
+    $("#summary").innerHTML = (state.flash ? `<div class="flash">${state.flash}</div>` : "") + "Ваш запис: " + parts.join(" · ");
     $("#fCar").hidden = c.layout !== "full";
     $("#submitBtn").disabled = !(slot && state.diam !== null && normPhone($("#phone").value));
   }
 
-  function renderAll() { renderAddresses(); renderCalendar(); renderDiameters(); renderTimes(); renderSummary(); }
+  function renderAll() { renderModeNote(); renderAddresses(); renderCalendar(); renderDiameters(); renderTimes(); renderSummary(); }
 
-  function selectCity(key) {
-    state.city = key;
-    state.time = null;
-    if (!state.date || !freeSlots(key, state.date, "").length) {
-      state.date = firstAvailable(key);
+  function pickDate() {
+    if (!state.date || !freeSlots(state.city, state.date, "").length) {
+      state.date = firstAvailable(state.city);
       if (state.date) state.view = new Date(state.date.getFullYear(), state.date.getMonth(), 1);
     }
+  }
+
+  async function selectCity(key) {
+    state.city = key;
+    state.time = null;
+    state.flash = "";
+    pickDate();
     renderAll();
+    if (LIVE) { await ensureLive(key); pickDate(); renderAll(); }
   }
 
   // ───────────────── Запис ─────────────────
-  function book() {
-    const slot = currentSlot();                      // повторна перевірка, як у боті перед записом
+  async function book() {
+    const wanted = state.time;
+    if (LIVE) { $("#submitBtn").disabled = true; await ensureLive(state.city, true); } // свіже читання, як у боті
+    const slot = currentSlot();                      // повторна перевірка перед записом
     const phone = normPhone($("#phone").value);
-    if (!slot || !phone || state.diam === null) { renderAll(); return; }
+    if (!slot || !phone || state.diam === null) {
+      if (wanted && !slot) state.flash = "Цей час щойно зайняли — оберіть інший.";
+      renderAll();
+      return;
+    }
     const c = cityBy(state.city);
-    const times = slot.two ? [slot.t, TIMES[TIMES.indexOf(slot.t) + 1]] : [slot.t];
+    const day = getDay(state.city, state.date);
+    const i = day.findIndex((x) => x.t === slot.t);
+    const times = slot.two ? [slot.t, day[i + 1].t] : [slot.t];
     const rec = {
       city: c.key, date: ymd(state.date), times, phone,
       name: $("#name").value.trim(), order: $("#order").value.trim(),
@@ -802,9 +879,9 @@
   $("#resetDemo").addEventListener("click", () => { demoBookings = []; saveDemo([]); renderAll(); });
 
   renderCityCards();
-  state.date = firstAvailable(state.city);
-  if (state.date) state.view = new Date(state.date.getFullYear(), state.date.getMonth(), 1);
+  pickDate();
   route();
+  if (LIVE) ensureLive(state.city); // підвантажити розклад заздалегідь
 })();
 </script>
 </body>

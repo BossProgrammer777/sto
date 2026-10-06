@@ -3,8 +3,22 @@
 from __future__ import annotations
 
 from datetime import date, datetime, timedelta
+from zoneinfo import ZoneInfo
 
 import config
+
+# Сервер (Railway) живёт в UTC, а записи — по киевскому времени.
+TZ = ZoneInfo("Europe/Kyiv")
+
+
+def now() -> datetime:
+    """Текущее время по Киеву."""
+    return datetime.now(TZ)
+
+
+def today() -> date:
+    """Сегодняшняя дата по Киеву."""
+    return now().date()
 
 
 def month_sheet_name(d: date) -> str:
@@ -38,13 +52,13 @@ def slot_times() -> list[str]:
 
 def upcoming_dates(days_ahead: int, start: date | None = None) -> list[date]:
     """Ближайшие даты (включая сегодня) на N дней вперёд."""
-    start = start or date.today()
+    start = start or today()
     return [start + timedelta(days=i) for i in range(days_ahead)]
 
 
 def dates_through_month_end(months_ahead: int = 1, start: date | None = None) -> list[date]:
     """Даты от сегодня до конца месяца (текущего при 0, следующего при 1 и т.д.)."""
-    start = start or date.today()
+    start = start or today()
     total = (start.month - 1) + months_ahead
     y = start.year + total // 12
     m = total % 12 + 1

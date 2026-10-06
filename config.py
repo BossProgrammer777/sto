@@ -34,6 +34,9 @@ GOOGLE_CREDENTIALS_JSON = _get("GOOGLE_CREDENTIALS_JSON", required=True)
 # для которых уже существует месячный лист.
 MONTHS_AHEAD = int(_get("MONTHS_AHEAD", "1"))
 
+# Публичный API расписания для сайта (только чтение). Выключить: WEB_API=false.
+WEB_API_ENABLED = _get("WEB_API", "true").lower() in ("1", "true", "yes", "да")
+
 
 def _load_allowed_ids() -> set[int]:
     """Whitelist Telegram ID операторов с доступом к боту (через запятую)."""

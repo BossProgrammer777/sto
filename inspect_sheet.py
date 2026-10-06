@@ -46,7 +46,7 @@ def main() -> None:
         print(f"  • {ws.title}  ({ws.row_count}×{ws.col_count})")
     print("=" * 70)
 
-    month_name = args.month or cal.month_sheet_name(date.today())
+    month_name = args.month or cal.month_sheet_name(cal.today())
     try:
         ws = ss.worksheet(month_name)
     except gspread.exceptions.WorksheetNotFound:

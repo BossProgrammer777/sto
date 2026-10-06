@@ -578,8 +578,26 @@ async def on_error(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
     log.exception("Ошибка в обработчике", exc_info=context.error)
 
 
+async def _post_init(app: Application) -> None:
+    """Запустить API расписания для сайта в том же event loop, что и бот."""
+    if not config.WEB_API_ENABLED:
+        return
+    try:
+        from web_api import start_web_api
+        app.bot_data["web_runner"] = await start_web_api(sheets)
+    except Exception:  # noqa: BLE001
+        log.exception("Web API не запустился — бот продолжает работать без него")
+
+
+async def _post_shutdown(app: Application) -> None:
+    runner = app.bot_data.get("web_runner")
+    if runner is not None:
+        await runner.cleanup()
+
+
 def build_app() -> Application:
-    app = Application.builder().token(config.TELEGRAM_BOT_TOKEN).build()
+    app = (Application.builder().token(config.TELEGRAM_BOT_TOKEN)
+           .post_init(_post_init).post_shutdown(_post_shutdown).build())
     # Отмена должна срабатывать на любом шаге, поэтому ставим её первым
     # обработчиком в каждом стейте (иначе общий текстовый её перехватит).
     cancel_h = MessageHandler(filters.Regex(rf"^{re.escape(kb.BTN_CANCEL)}$"), cancel)
