@@ -1,0 +1,811 @@
+<!DOCTYPE html>
+<html lang="uk">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Шиномонтаж — REZINA.CC</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;700&family=Montserrat:wght@800;900&family=Russo+One&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --text: #333;
+    --muted: #777;
+    --link: #1f8ad8;
+    --blue: #2462ad;
+    --nav-a: #2b74bd;
+    --nav-b: #2493d2;
+    --nav-c: #22c9e2;
+    --banner: #2c3a8f;
+    --green-a: #3fae49;
+    --green-b: #6cc04a;
+    --red: #e3262b;
+    --sel: #3399f3;
+    --line: #d6d6d6;
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body { margin: 0; font-family: Roboto, Arial, sans-serif; color: var(--text); background: #fff; }
+  a { color: inherit; text-decoration: none; }
+  button { font-family: inherit; }
+  .wrap { max-width: 1620px; margin: 0 auto; padding: 0 35px; }
+
+  /* ── верхня смуга ── */
+  .topbar { background: #f2f2f2; font-size: 15px; }
+  .topbar .wrap { display: flex; align-items: center; justify-content: space-between; height: 40px; }
+  .tb-right { display: flex; align-items: center; gap: 26px; height: 100%; }
+  .lang { display: flex; align-items: center; gap: 9px; }
+  .flag { width: 25px; height: 17px; background: linear-gradient(#0057b7 50%, #ffd700 50%); }
+  .cart-code { display: flex; align-items: center; gap: 10px; color: #777; margin-left: 60px; }
+  .cart-code input { width: 110px; height: 24px; border: 0; background: #f2f2f2; }
+  .login { background: #7ec1ec; color: #fff; height: 100%; display: flex; align-items: center; gap: 7px; padding: 0 22px; font-size: 16px; }
+
+  /* ── шапка ── */
+  .header .wrap { display: flex; align-items: center; height: 126px; }
+  .logo { flex: 0 0 300px; height: 66px; border-radius: 9px; background: var(--blue); border: 3px solid #fff;
+          box-shadow: 0 0 0 3px #3a7cc4, 0 2px 4px rgba(0,0,0,.25); display: flex; align-items: center; justify-content: center;
+          color: #fff; font: 900 45px/1 Montserrat, "Arial Black", sans-serif; letter-spacing: .5px; }
+  .logo sup { font: 700 10px/1 Arial, sans-serif; align-self: flex-start; margin: 9px 0 0 3px; border: 1px solid #fff; border-radius: 50%; width: 13px; height: 13px; display: flex; align-items: center; justify-content: center; }
+  .hmid { flex: 0 1 744px; margin-left: 20px; }
+  .phones { display: flex; gap: 20px; font-size: 16px; color: #222; margin-bottom: 13px; white-space: nowrap; }
+  .phones span { display: inline-flex; align-items: center; gap: 3px; }
+  .search { display: flex; height: 38px; border: 1px solid #cfcfcf; background: #f4f4f4; }
+  .search input { flex: 1; min-width: 0; border: 0; background: transparent; padding: 0 19px; font: 18px Roboto, Arial, sans-serif; color: #555; outline: none; }
+  .search button { width: 86px; border: 0; border-left: 1px solid #cfcfcf; background: #f4f4f4; display: flex; align-items: center; justify-content: center; cursor: pointer; }
+  .hlinks { margin-left: 60px; display: flex; flex-direction: column; gap: 22px; font-size: 19px; }
+  .hlinks a { color: var(--link); display: inline-flex; align-items: center; gap: 8px; }
+  .hlinks a span { border-bottom: 1px dashed var(--link); line-height: 1.15; }
+  .hicons { margin-left: auto; display: flex; gap: 26px; align-items: center; padding-right: 10px; }
+  .hicon { position: relative; width: 50px; height: 46px; display: flex; align-items: center; justify-content: center; }
+  .badge { position: absolute; top: -6px; right: -6px; width: 22px; height: 22px; border-radius: 50%; background: #bdbdbd; color: #fff; font-size: 14px; display: flex; align-items: center; justify-content: center; }
+
+  /* ── меню ── */
+  .nav { background: linear-gradient(90deg, var(--nav-a) 0%, var(--nav-b) 45%, var(--nav-c) 100%); }
+  .nav .wrap { display: flex; justify-content: space-between; align-items: center; height: 56px; }
+  .nav-group { display: flex; align-items: center; gap: 15px; padding-left: 12px; }
+  .nav a { color: #fff; font-weight: 500; font-size: 18.5px; letter-spacing: .7px; white-space: nowrap; }
+  .nav a .tri { font-size: 11px; margin-left: 3px; vertical-align: 2px; }
+
+  /* ── хлібні крихти / заголовок ── */
+  .crumbs { margin-top: 26px; font-size: 16px; color: #555; }
+  .crumbs a:hover { color: var(--link); }
+  .crumbs .sep { margin: 0 7px; color: #888; font-size: 13px; }
+  .h1row { display: flex; align-items: center; justify-content: space-between; gap: 20px; }
+  h1.page { font-size: 46px; font-weight: 400; margin: 4px 0 16px; color: #333; }
+
+  .cta { display: inline-flex; align-items: center; gap: 10px; border: 0; cursor: pointer; color: #fff; font-size: 19px; font-weight: 700;
+         padding: 14px 28px; border-radius: 30px; background: linear-gradient(90deg, var(--green-a), var(--green-b));
+         box-shadow: 0 6px 18px rgba(63,174,73,.35); letter-spacing: .3px; transition: transform .15s, box-shadow .15s; }
+  .cta:hover { transform: translateY(-2px); box-shadow: 0 9px 22px rgba(63,174,73,.45); }
+
+  /* ── банер ── */
+  .banner { display: block; width: 100%; max-width: 1550px; height: auto; background: var(--banner); }
+
+  /* ── картки міст ── */
+  .cities { display: grid; grid-template-columns: repeat(5, minmax(0, 293px)); gap: 15px; margin: 70px 0 60px; }
+  .city { background: #fff; border-radius: 8px; box-shadow: 0 0 12px rgba(0,0,0,.09); padding: 3px; overflow: hidden; }
+  .city .img { position: relative; height: 210px; border-radius: 6px 6px 0 0; background-size: cover; background-position: center bottom; overflow: hidden; }
+  .city .img::after { content: ""; position: absolute; inset: 0; background: linear-gradient(to top, rgba(30,60,160,.75), rgba(30,60,160,0) 60%); }
+  .city .name { position: absolute; left: 16px; bottom: 10px; z-index: 1; color: #fff; font: 700 44px/1.05 Roboto, Arial, sans-serif; text-shadow: 0 2px 6px rgba(0,0,0,.35); }
+  .city .go { display: flex; align-items: center; justify-content: space-between; width: 100%; border: 0; background: #fff; color: var(--link);
+              font-size: 16px; font-weight: 500; padding: 13px 14px 11px; cursor: pointer; border-top: 1px solid #eef2f6; }
+  .city .go:hover { color: #fff; background: linear-gradient(90deg, var(--nav-a), var(--nav-c)); }
+
+  .promo { position: fixed; left: 0; bottom: 70px; z-index: 20; background: #6cc04a; color: #fff; font-size: 19px; padding: 13px 26px 13px 18px;
+           border-radius: 0 30px 30px 0; transform: translateX(-34px); transition: transform .2s; box-shadow: 0 4px 12px rgba(0,0,0,.15); cursor: default; }
+  .promo:hover { transform: translateX(0); }
+  body.online .promo { display: none; } /* на сторінці запису не перекриває форму */
+
+  /* ── онлайн-запис ── */
+  .bk-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 20px; margin-top: 18px; }
+  .bk-title { font-size: 40px; font-weight: 700; color: #222; margin: 0; padding-bottom: 12px; flex: 1; border-bottom: 4px solid transparent;
+              border-image: linear-gradient(90deg, var(--nav-a), var(--nav-c)) 1; }
+  .back { color: var(--link); font-size: 16px; padding-bottom: 16px; white-space: nowrap; }
+  .back:hover { text-decoration: underline; }
+  .demo-note { margin: 18px 0 0; background: #fff8e1; border: 1px solid #f3d98b; color: #6b5512; border-radius: 8px; padding: 10px 14px; font-size: 14px; line-height: 1.45; }
+  .demo-note button { border: 0; background: none; color: var(--link); text-decoration: underline; cursor: pointer; font-size: 14px; padding: 0; }
+
+  .steps { display: grid; grid-template-columns: minmax(0, 1.05fr) minmax(0, 1fr) minmax(0, 1.15fr); gap: 44px; margin-top: 26px; }
+  .step h3 { font-size: 26px; font-weight: 400; margin: 0 0 16px; color: #333; }
+  .step h3 b { color: var(--red); font-weight: 700; }
+  .step h4 { font-size: 15px; font-weight: 500; text-transform: uppercase; letter-spacing: .6px; color: #8a96a3; margin: 0 0 10px; }
+
+  .addr { display: flex; align-items: center; gap: 14px; width: 100%; text-align: left; padding: 15px 18px; border-radius: 12px; border: 2px solid #d6e6f5;
+          background: #fff; cursor: pointer; margin-bottom: 13px; font-weight: 700; font-size: 17px; color: #1d3c6e; transition: box-shadow .15s, background .15s; }
+  .addr:hover { border-color: #9fc6ea; }
+  .addr .dot { width: 24px; height: 24px; border-radius: 50%; border: 2px solid #9bbfe0; background: #fff; flex: 0 0 auto; }
+  .addr small { display: block; font-weight: 400; font-size: 13px; color: #6d7f93; margin-top: 2px; }
+  .addr.sel { background: linear-gradient(90deg, var(--nav-a), var(--nav-c)); color: #fff; border-color: transparent; box-shadow: 0 0 0 4px rgba(34,201,226,.25), 0 6px 16px rgba(36,140,210,.35); }
+  .addr.sel .dot { border: 7px solid #fff; background: var(--nav-a); }
+  .addr.sel small { color: #e6f6ff; }
+
+  .cal { display: inline-block; border: 1px solid #cfcfcf; padding: 6px; background: #fff; font-size: 15px; box-shadow: 0 2px 8px rgba(0,0,0,.05); }
+  .cal-head { display: flex; align-items: center; justify-content: space-between; padding: 2px 4px 8px; gap: 6px; }
+  .cal-head .arr { border: 0; background: none; cursor: pointer; font-size: 16px; color: #555; padding: 4px 8px; }
+  .cal-head .arr:disabled { color: #d0d0d0; cursor: default; }
+  .cal-head .mid { display: flex; align-items: center; gap: 12px; font-weight: 700; }
+  .cal-head select { border: 0; background: none; font: 700 15px Roboto, Arial, sans-serif; color: #333; cursor: pointer; }
+  .cal-head .home { border: 0; background: none; cursor: pointer; padding: 2px 4px; }
+  .cal table { border-collapse: collapse; }
+  .cal th { background: #e9e9e9; color: #555; font-weight: 400; font-size: 14px; padding: 7px 0; width: 46px; border: 1px solid var(--line); }
+  .cal td { border: 1px solid var(--line); padding: 0; }
+  .cal td button { display: block; width: 100%; height: 38px; border: 0; background: linear-gradient(#fbfbfb, #ececec); font: 15px Roboto, Arial, sans-serif; color: #333; cursor: pointer; }
+  .cal td button:hover:not(:disabled) { background: #dceeff; }
+  .cal td button:disabled { color: #c3c3c3; background: #f7f7f7; cursor: default; }
+  .cal td button.full:disabled { text-decoration: line-through; }
+  .cal td button.today { box-shadow: inset 0 0 0 2px #9cc9f3; }
+  .cal td button.sel { background: var(--sel); color: #fff; }
+  .cal-legend { display: flex; gap: 16px; font-size: 13px; color: #888; margin-top: 10px; }
+  .cal-legend i { display: inline-block; width: 12px; height: 12px; vertical-align: -1px; margin-right: 5px; border: 1px solid #ccc; }
+
+  .chips { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 18px; }
+  .chip { border: 1px solid #cfd8e3; background: #fff; border-radius: 18px; padding: 6px 14px; font-size: 15px; cursor: pointer; color: #333; }
+  .chip:hover { border-color: #8fbbe6; }
+  .chip.sel { background: var(--nav-a); border-color: var(--nav-a); color: #fff; }
+  .hint { font-size: 13px; color: #8a6d1d; background: #fff6dc; border-radius: 6px; padding: 6px 10px; margin: -6px 0 14px; }
+  .times { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+  .times.wide { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .tpill { border: 1px solid #cdcdcd; background: #fff; border-radius: 22px; padding: 7px 4px; font-size: 18px; color: #333; cursor: pointer; white-space: nowrap; }
+  .tpill:hover { border-color: #8fbbe6; background: #f3f9ff; }
+  .tpill.sel { background: var(--sel); border-color: var(--sel); color: #fff; }
+  .empty { color: #8a8a8a; font-size: 15px; background: #f7f7f7; border-radius: 8px; padding: 14px; }
+
+  .form { margin-top: 38px; padding-top: 26px; border-top: 1px solid #e5e9ee; }
+  .fgrid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px; }
+  .field label { display: block; font-size: 14px; color: #6b7785; margin-bottom: 6px; }
+  .field label b { color: var(--red); }
+  .field input, .field select { width: 100%; height: 46px; border: 1px solid #cfd8e3; border-radius: 8px; padding: 0 13px; font: 16px Roboto, Arial, sans-serif; color: #333; background: #fff; }
+  .field input:focus, .field select:focus { outline: none; border-color: var(--nav-b); box-shadow: 0 0 0 3px rgba(36,147,210,.15); }
+  .field.err input { border-color: var(--red); }
+  .submit-row { display: flex; align-items: center; gap: 22px; margin-top: 22px; flex-wrap: wrap; }
+  .summary { flex: 1; min-width: 260px; font-size: 16px; color: #444; background: #f4f8fc; border-radius: 10px; padding: 13px 16px; line-height: 1.5; }
+  .summary b { color: #1d3c6e; }
+  .cta:disabled { background: #c9d2db; box-shadow: none; cursor: not-allowed; transform: none; }
+  .agree { font-size: 12.5px; color: #999; margin-top: 10px; }
+
+  /* ── модальне вікно ── */
+  .modal { position: fixed; inset: 0; background: rgba(15,30,55,.55); display: none; align-items: center; justify-content: center; z-index: 50; padding: 16px; }
+  .modal.open { display: flex; }
+  .mbox { background: #fff; border-radius: 16px; max-width: 460px; width: 100%; padding: 30px 30px 26px; text-align: center; box-shadow: 0 20px 50px rgba(0,0,0,.3); }
+  .mbox .ok { width: 74px; height: 74px; border-radius: 50%; background: linear-gradient(135deg, var(--green-a), var(--green-b)); color: #fff; font-size: 42px; display: flex; align-items: center; justify-content: center; margin: 0 auto 14px; }
+  .mbox h2 { margin: 0 0 14px; font-size: 26px; }
+  .mbox dl { text-align: left; margin: 0 0 18px; background: #f4f8fc; border-radius: 10px; padding: 12px 16px; display: grid; grid-template-columns: auto 1fr; gap: 6px 14px; font-size: 15px; }
+  .mbox dt { color: #7a8794; }
+  .mbox dd { margin: 0; font-weight: 500; color: #1d3c6e; }
+  .mbox p { color: #666; font-size: 14px; margin: 0 0 18px; }
+
+  footer { background: #1d4f8f; color: #cfe3f7; margin-top: 40px; font-size: 14px; }
+  footer .wrap { display: flex; justify-content: space-between; align-items: center; gap: 20px; padding-top: 22px; padding-bottom: 22px; flex-wrap: wrap; }
+  footer b { color: #fff; }
+
+  [hidden] { display: none !important; }
+
+  @media (max-width: 1400px) {
+    .hlinks { margin-left: 30px; font-size: 17px; }
+    .nav a { font-size: 16px; letter-spacing: .3px; }
+    .nav-group { gap: 11px; }
+    .cities { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+  }
+  @media (max-width: 1180px) {
+    .phones { flex-wrap: wrap; gap: 6px 16px; }
+    .hlinks { display: none; }
+    .nav .wrap { overflow-x: auto; gap: 20px; }
+    .steps { grid-template-columns: 1fr 1fr; }
+    .steps .step:nth-child(3) { grid-column: 1 / -1; }
+    .fgrid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .cities { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  }
+  @media (max-width: 760px) {
+    .wrap { padding: 0 16px; }
+    .topbar .wrap { height: auto; padding-top: 6px; padding-bottom: 6px; font-size: 12px; }
+    .cart-code { display: none; }
+    .header .wrap { height: auto; flex-wrap: wrap; gap: 12px; padding-top: 14px; padding-bottom: 14px; }
+    .logo { flex: 0 0 210px; height: 50px; font-size: 31px; }
+    .hmid { flex: 1 1 100%; margin: 0; order: 3; }
+    .phones { font-size: 14px; }
+    .hicons { gap: 12px; }
+    h1.page { font-size: 32px; }
+    .h1row { flex-direction: column; align-items: flex-start; }
+    .cities { grid-template-columns: repeat(2, minmax(0, 1fr)); margin-top: 30px; }
+    .city .name { font-size: 30px; }
+    .city .img { height: 150px; }
+    .steps { grid-template-columns: 1fr; }
+    .bk-title { font-size: 28px; }
+    .bk-head { flex-direction: column; align-items: flex-start; }
+    .cal th { width: 40px; }
+    .fgrid { grid-template-columns: 1fr; }
+    .promo { display: none; }
+  }
+</style>
+</head>
+<body>
+
+<!-- ═══════════ Верхня смуга ═══════════ -->
+<div class="topbar">
+  <div class="wrap">
+    <div>Час роботи: пн-пт: 09:00 - 20:00 сб: 09:00 - 19:00 нд: 10:00 - 19:00</div>
+    <div class="tb-right">
+      <div class="lang"><span class="flag"></span><span class="chev">
+        <svg width="13" height="9" viewBox="0 0 13 9"><path d="M1.5 1.5l5 5 5-5" fill="none" stroke="#e5322d" stroke-width="2.4"/></svg></span></div>
+      <label class="cart-code">Код кошика: <input aria-label="Код кошика"></label>
+      <a class="login" href="#" data-noop>
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="#fff" stroke-width="1.6"><path d="M6 2h7v12H6M2 8h8M7 5l3 3-3 3"/></svg>Вхід</a>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════ Шапка ═══════════ -->
+<header class="header">
+  <div class="wrap">
+    <a class="logo" href="#" data-route="main">REZINA.CC<sup>R</sup></a>
+    <div class="hmid">
+      <div class="phones">
+        <span><svg width="16" height="16" viewBox="0 0 24 24"><path fill="#1db2e6" d="M6.6 10.8a15.2 15.2 0 006.6 6.6l2.2-2.2a1 1 0 011-.25 11.4 11.4 0 003.6.57 1 1 0 011 1V20a1 1 0 01-1 1A17 17 0 013 4a1 1 0 011-1h3.5a1 1 0 011 1c0 1.25.2 2.45.57 3.57a1 1 0 01-.25 1z"/></svg>0(800) 30-77-77</span>
+        <span><svg width="15" height="15" viewBox="0 0 20 20"><circle cx="10" cy="10" r="9" fill="#e60000"/><path d="M10.6 5.2c-2.6.3-4.3 2.2-4.3 4.6 0 2.5 1.8 4.2 4 4.2 2.1 0 3.6-1.5 3.6-3.4 0-2-1.4-3-3-3.1.1-1 .7-1.8 1.6-2.3z" fill="#fff"/></svg>(095) 175-77-77</span>
+        <span><svg width="17" height="17" viewBox="0 0 20 20"><g stroke="#3cb5ea" stroke-width="3" stroke-linecap="round"><path d="M10 2v16M3 6l14 8M3 14l14-8"/></g></svg>(067) 160-77-77</span>
+        <span><svg width="16" height="16" viewBox="0 0 20 20"><circle cx="10" cy="10" r="9" fill="#ffd400"/><path d="M6 11.5c1.2 2 6.8 2 8 0" stroke="#7a6400" stroke-width="1.5" fill="none"/></svg>(093) 309-77-77</span>
+      </div>
+      <form class="search" onsubmit="return false">
+        <input placeholder="Введіть фразу для пошуку" aria-label="Пошук">
+        <button type="button" aria-label="Шукати"><svg width="27" height="27" viewBox="0 0 24 24" fill="none" stroke="#666" stroke-width="1.6"><circle cx="10.5" cy="10.5" r="7"/><path d="M15.7 15.7L21 21"/></svg></button>
+      </form>
+    </div>
+    <div class="hlinks">
+      <a href="#" data-noop><svg width="18" height="18" viewBox="0 0 24 24"><path fill="#1db2e6" d="M6.6 10.8a15.2 15.2 0 006.6 6.6l2.2-2.2a1 1 0 011-.25 11.4 11.4 0 003.6.57 1 1 0 011 1V20a1 1 0 01-1 1A17 17 0 013 4a1 1 0 011-1h3.5a1 1 0 011 1c0 1.25.2 2.45.57 3.57a1 1 0 01-.25 1z"/></svg><span>Передзвоніть мені</span></a>
+      <a href="#" data-noop><svg width="16" height="16" viewBox="0 0 24 24"><path fill="#1db2e6" d="M3 17.25V21h3.75L17.8 9.94l-3.75-3.75zM20.7 7.04a1 1 0 000-1.41l-2.34-2.34a1 1 0 00-1.41 0l-1.83 1.83 3.75 3.75z"/></svg><span>Написати керівнику</span></a>
+    </div>
+    <div class="hicons">
+      <div class="hicon" title="Переглянуті"><svg width="44" height="34" viewBox="0 0 44 34" fill="none" stroke="#c9c9c9" stroke-width="2.4"><path d="M3 21c5-7 11-10 19-10s14 3 19 10c-5 7-11 10-19 10S8 28 3 21z"/><circle cx="22" cy="21" r="5.5"/><path d="M22 3v4M12 5l2 4M32 5l-2 4M5 10l3 3M39 10l-3 3"/></svg><span class="badge">2</span></div>
+      <div class="hicon" title="Кошик"><svg width="42" height="40" viewBox="0 0 42 40" fill="none" stroke="#ef4a50" stroke-width="2.6" stroke-linejoin="round"><path d="M2 4h6l5 22h21l4-15H11"/><circle cx="16" cy="33" r="3"/><circle cx="31" cy="33" r="3"/></svg><span class="badge">0</span></div>
+    </div>
+  </div>
+</header>
+
+<!-- ═══════════ Меню ═══════════ -->
+<nav class="nav">
+  <div class="wrap">
+    <div class="nav-group">
+      <a href="#" data-noop>Шини<span class="tri">▼</span></a>
+      <a href="#" data-noop>Диски</a>
+      <a href="#" data-noop>Вантажні шини<span class="tri">▼</span></a>
+      <a href="#" data-noop>Мотошини</a>
+      <a href="#" data-noop>Мастила</a>
+      <a href="#" data-noop>Акумулятори</a>
+    </div>
+    <div class="nav-group">
+      <a href="#" data-route="main">Шиномонтаж</a>
+      <a href="#" data-noop>Сезонне зберігання</a>
+      <a href="#" data-noop>Покупцям<span class="tri">▼</span></a>
+      <a href="#" data-noop>Контакти</a>
+      <a href="#" data-noop>Оплата і доставка</a>
+    </div>
+  </div>
+</nav>
+
+<main class="wrap">
+
+  <!-- ═══════════ Сторінка «Шиномонтаж» (копія) ═══════════ -->
+  <section id="view-main">
+    <div class="crumbs"><a href="#" data-noop>Головна</a><span class="sep">&gt;</span><a href="#" data-noop>Сторінки</a><span class="sep">&gt;</span>Шиномонтаж</div>
+    <div class="h1row">
+      <h1 class="page">Шиномонтаж</h1>
+      <button class="cta" data-go-online>
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4M8 15l2.5 2.5L16 13"/></svg>
+        Онлайн-запис
+      </button>
+    </div>
+
+    <svg class="banner" viewBox="0 0 1550 313" role="img" aria-label="Сервіси шиномонтажу — Точка шин">
+      <rect width="1550" height="313" fill="#2c3a8f"/>
+      <!-- гайковий ключ + викрутка -->
+      <g transform="translate(60 42)">
+        <g stroke="#fff" stroke-linecap="round" fill="none">
+          <path d="M30 30 L128 128" stroke-width="13"/>
+          <path d="M18 18 L34 34" stroke-width="7"/>
+          <path d="M140 140 L205 205" stroke-width="40"/>
+        </g>
+        <path d="M44 196 L176 64" stroke="#fff" stroke-width="34" stroke-linecap="round"/>
+        <circle cx="196" cy="44" r="44" fill="#fff"/>
+        <rect x="181" y="-6" width="30" height="58" fill="#2c3a8f" transform="rotate(45 196 44)"/>
+        <circle cx="44" cy="196" r="20" fill="#fff"/>
+        <circle cx="44" cy="196" r="9" fill="#2c3a8f"/>
+      </g>
+      <text x="386" y="122" fill="#fff" font-family="Montserrat, 'Arial Black', sans-serif" font-weight="900" font-size="80"
+            textLength="1045" lengthAdjust="spacingAndGlyphs">СЕРВІСИ ШИНОМОНТАЖУ</text>
+      <!-- лінії швидкості -->
+      <g stroke="#fff" stroke-linecap="round">
+        <path d="M700 165 H780" stroke-width="3"/>
+        <path d="M672 182 H778" stroke-width="4"/>
+        <path d="M690 199 H774" stroke-width="5"/>
+        <path d="M660 216 H774" stroke-width="6"/>
+        <path d="M682 233 H776" stroke-width="5"/>
+        <path d="M668 250 H780" stroke-width="4"/>
+        <path d="M698 266 H784" stroke-width="3"/>
+      </g>
+      <!-- колесо -->
+      <g transform="translate(835 215)">
+        <circle r="64" fill="#fff"/>
+        <circle r="50" fill="#2c3a8f"/>
+        <circle r="44" fill="#fff"/>
+        <g fill="#2c3a8f">
+          <circle cx="0" cy="-26" r="11"/><circle cx="24.7" cy="-8" r="11"/><circle cx="15.3" cy="21" r="11"/>
+          <circle cx="-15.3" cy="21" r="11"/><circle cx="-24.7" cy="-8" r="11"/>
+        </g>
+        <circle r="8" fill="#2c3a8f"/><circle r="3.5" fill="#fff"/>
+      </g>
+      <g stroke="#fff" stroke-linecap="round">
+        <path d="M884 170 H1132" stroke-width="4"/>
+        <path d="M884 266 H1136" stroke-width="4"/>
+      </g>
+      <text x="916" y="215" fill="#fff" font-family="'Russo One', 'Arial Black', sans-serif" font-size="50" textLength="212" lengthAdjust="spacingAndGlyphs">ТОЧКА</text>
+      <text x="926" y="258" fill="#fff" font-family="'Russo One', 'Arial Black', sans-serif" font-size="56" textLength="204" lengthAdjust="spacingAndGlyphs">ШИН</text>
+    </svg>
+
+    <div class="cities" id="cityCards"></div>
+  </section>
+
+  <!-- ═══════════ Онлайн-запис ═══════════ -->
+  <section id="view-online" hidden>
+    <div class="crumbs"><a href="#" data-noop>Головна</a><span class="sep">&gt;</span><a href="#" data-route="main">Шиномонтаж</a><span class="sep">&gt;</span>Онлайн-запис</div>
+    <div class="bk-head">
+      <h1 class="bk-title">Онлайн-запис на шиномонтаж</h1>
+      <a class="back" href="#" data-route="main">← До сторінки «Шиномонтаж»</a>
+    </div>
+    <div class="demo-note">
+      <b>Демо-версія для презентації.</b> Розклад згенеровано автоматично за тими ж правилами, що й у боті:
+      вільний час — лише білі порожні слоти; оранжеві/червоні не пропонуються; R20 і більше у Києві займають 2 слоти поспіль.
+      У робочій версії розклад братиметься з таблиці «Запис на Шиномонтаж 2026».
+      <button type="button" id="resetDemo">Скинути демо-записи</button>
+    </div>
+
+    <div class="steps">
+      <div class="step">
+        <h3><b>1.</b> Оберіть адресу</h3>
+        <div id="addrList"></div>
+      </div>
+      <div class="step">
+        <h3><b>2.</b> Оберіть дату запису</h3>
+        <div class="cal" id="cal"></div>
+        <div class="cal-legend">
+          <span><i style="background:#3399f3;border-color:#3399f3"></i>обрана</span>
+          <span><i style="background:#f7f7f7"></i>немає вільного часу</span>
+        </div>
+      </div>
+      <div class="step">
+        <h3><b>3.</b> Діаметр і час запису</h3>
+        <h4>Діаметр шин</h4>
+        <div class="chips" id="diamChips"></div>
+        <div class="hint" id="bigHint" hidden>R20 і більше у Києві — 2 слоти поспіль (≈1 година). Показано лише час, де є місце на обидва.</div>
+        <h4>Вільний час</h4>
+        <div class="times" id="times"></div>
+      </div>
+    </div>
+
+    <form class="form" id="bookForm" novalidate>
+      <h3 style="font-size:26px;font-weight:400;margin:0 0 18px"><b style="color:var(--red)">4.</b> Ваші дані</h3>
+      <div class="fgrid">
+        <div class="field" id="fPhone"><label for="phone">Телефон <b>*</b></label><input id="phone" type="tel" inputmode="tel" placeholder="+38 (0__) ___-__-__" autocomplete="tel"></div>
+        <div class="field"><label for="name">Ім'я</label><input id="name" autocomplete="given-name" placeholder="Як до вас звертатися"></div>
+        <div class="field"><label for="order">Номер замовлення</label><input id="order" inputmode="numeric" placeholder="Якщо купували шини у нас"></div>
+        <div class="field" id="fCar"><label for="car">Тип авто</label>
+          <select id="car">
+            <option value="">— оберіть —</option>
+            <option value="Легковой">Легковий</option>
+            <option value="Кроссовер/Паркетник">Кросовер / паркетник</option>
+            <option value="Микроавтобус">Мікроавтобус</option>
+            <option value="Большой Бус">Великий бус</option>
+          </select>
+        </div>
+      </div>
+      <div class="submit-row">
+        <div class="summary" id="summary"></div>
+        <button class="cta" id="submitBtn" type="submit" disabled>Записатися</button>
+      </div>
+      <div class="agree">Натискаючи «Записатися», ви погоджуєтесь на обробку персональних даних. Менеджер зателефонує для підтвердження.</div>
+    </form>
+  </section>
+</main>
+
+<footer>
+  <div class="wrap">
+    <div><b>REZINA.CC</b> · Сервіси шиномонтажу «Точка шин»</div>
+    <div>пн-пт 09:00–20:00 · сб 09:00–19:00 · нд 10:00–19:00</div>
+    <div><b>0(800) 30-77-77</b> · (095) 175-77-77 · (067) 160-77-77 · (093) 309-77-77</div>
+  </div>
+</footer>
+
+<div class="promo">Економія до 1200 грн</div>
+
+<div class="modal" id="modal" role="dialog" aria-modal="true" aria-labelledby="mTitle">
+  <div class="mbox">
+    <div class="ok">✓</div>
+    <h2 id="mTitle">Вас записано!</h2>
+    <dl id="mDetails"></dl>
+    <p>Менеджер зателефонує для підтвердження запису.<br><span style="color:#b08a1e">Демо: запис збережено лише у вашому браузері.</span></p>
+    <button class="cta" id="mClose" type="button">Готово</button>
+  </div>
+</div>
+
+<script>
+(() => {
+  "use strict";
+
+  // ───────────────── Налаштування (як у боті: config.py) ─────────────────
+  const CITIES = [
+    { key: "kyiv",       name: "м. Київ — ПОСТ №1",      short: "Київ",       layout: "simple", addr: "" },
+    { key: "sofiyivska", name: "Софіївська Борщагівка",   short: "Софіївська", layout: "simple", addr: "" },
+    { key: "kharkiv",    name: "м. Харків",               short: "Харків",     layout: "full",   addr: "" },
+    { key: "lviv",       name: "м. Львів",                short: "Львів",      layout: "full",   addr: "" },
+    { key: "dnipro",     name: "м. Дніпро",               short: "Дніпро",     layout: "full",   addr: "" },
+  ];
+  const TWO_POST_CITIES = ["kyiv"];          // де R20+ займає 2 слоти
+  const BIG_DIAMETERS = ["R20", "R21", "R22"];
+  const MONTHS_AHEAD = 1;                    // до кінця наступного місяця
+  const DIAMETERS = [
+    ["R13","R13"],["R14","R14"],["R15","R15"],["R16","R16"],["R17","R17"],["R18","R18"],
+    ["R19","R19"],["R20","R20"],["R21","R21"],["R22","R22"],["РОЗВАЛ","Розвал-сходження"],["СТО","СТО"],["","Не знаю"],
+  ];
+  const TIMES = [];
+  for (let h = 9; h <= 19; h++) { TIMES.push(h + ":00"); TIMES.push(h + ":30"); }
+
+  const MONTHS_UA = ["Січень","Лютий","Березень","Квітень","Травень","Червень","Липень","Серпень","Вересень","Жовтень","Листопад","Грудень"];
+  const DOW_UA = ["Нд","Пн","Вт","Ср","Чт","Пт","Сб"];
+  const CITY_THEME = {
+    kyiv:       ["#6fa6de", "#d4e6f7", "#2f4a74", "#4c6a96"],
+    sofiyivska: ["#4f97e6", "#dcefff", "#c79d5c", "#e0be82"],
+    kharkiv:    ["#f2a26a", "#6b80aa", "#323d58", "#4a587a"],
+    lviv:       ["#f4c08a", "#8fb6d9", "#8e4636", "#b8644d"],
+    dnipro:     ["#3d6fd1", "#a9c7f2", "#22386b", "#36508c"],
+  };
+
+  // ───────────────── Утиліти ─────────────────
+  const $ = (s, el = document) => el.querySelector(s);
+  const pad = (n) => String(n).padStart(2, "0");
+  const ymd = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+  const dayLabel = (d) => `${DOW_UA[d.getDay()]} ${pad(d.getDate())}.${pad(d.getMonth() + 1)}`;
+  const tmin = (t) => { const [h, m] = t.split(":").map(Number); return h * 60 + m; };
+  function hashStr(s) { let h = 2166136261; for (const c of s) { h ^= c.charCodeAt(0); h = Math.imul(h, 16777619); } return h >>> 0; }
+  function rng(seed) { return () => { seed |= 0; seed = (seed + 0x6D2B79F5) | 0; let t = Math.imul(seed ^ (seed >>> 15), 1 | seed); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }; }
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const lastDay = new Date(today.getFullYear(), today.getMonth() + 1 + MONTHS_AHEAD, 0);
+  const cityBy = (k) => CITIES.find((c) => c.key === k);
+
+  // ───────────────── Демо-розклад (замість таблиці) ─────────────────
+  // Колір слоту: W — білий, O — оранжевий, R — червоний; booked — є номер заказу.
+  const DEMO_KEY = "rezina_demo_bookings_v1";
+  function loadDemo() { try { return JSON.parse(localStorage.getItem(DEMO_KEY) || "[]"); } catch { return []; } }
+  function saveDemo(list) { try { localStorage.setItem(DEMO_KEY, JSON.stringify(list)); } catch { /* приватний режим */ } }
+  let demoBookings = loadDemo();
+  const dayCache = new Map();
+
+  function genDay(cityKey, d) {
+    const r = rng(hashStr(cityKey + ymd(d)));
+    const s = TIMES.map((t) => ({ t, color: "W", booked: false }));
+    const at = (t) => TIMES.indexOf(t);
+    const redFrom = (t) => { for (let i = at(t); i < s.length; i++) s[i].color = "R"; };
+    const orange = (list) => list.forEach((t) => (s[at(t)].color = "O"));
+    if (cityKey === "kyiv") { orange(["9:30", "11:30", "13:30", "15:30", "17:30"]); redFrom("18:00"); }
+    if (cityKey === "sofiyivska") redFrom("17:30");
+    if (cityKey === "kharkiv") redFrom("18:00");
+    if (cityKey === "lviv") redFrom("18:30");
+    if (cityKey === "dnipro") { orange(["10:30", "12:30", "14:30", "16:30"]); redFrom("18:00"); }
+    if (d.getDay() === 0) { s[0].color = "R"; s[1].color = "R"; } // неділя з 10:00
+
+    const away = Math.round((d - today) / 864e5);
+    let p = 0.5 - away * 0.012 + (d.getDay() === 6 ? 0.2 : 0);
+    p = Math.max(0.08, Math.min(0.78, p));
+    for (let i = 0; i < s.length; i++) {
+      if (s[i].color !== "W" || s[i].booked) continue;
+      if (r() < p) {
+        s[i].booked = true;
+        if (s[i + 1] && s[i + 1].color === "O" && r() < 0.45) s[i + 1].booked = true; // запис R20+ на 2 слоти
+      }
+    }
+    if (r() < 0.04) s.forEach((x) => (x.color = "R")); // зрідка — повністю закритий день
+    return s;
+  }
+
+  function getDay(cityKey, d) {
+    const key = cityKey + "|" + ymd(d);
+    if (!dayCache.has(key)) dayCache.set(key, genDay(cityKey, d));
+    const base = dayCache.get(key).map((x) => ({ ...x }));
+    for (const b of demoBookings) {
+      if (b.city !== cityKey || b.date !== ymd(d)) continue;
+      for (const t of b.times) { const slot = base.find((x) => x.t === t); if (slot) slot.booked = true; }
+    }
+    return base;
+  }
+
+  // ───────────────── Правила вільних слотів (порт з sheets.py) ─────────────────
+  const needsTwoSlots = (cityKey, diam) => TWO_POST_CITIES.includes(cityKey) && BIG_DIAMETERS.includes(diam);
+
+  function freeSlots(cityKey, d, diam) {
+    const s = getDay(cityKey, d);
+    const big = needsTwoSlots(cityKey, diam);
+    const empty = (x) => !x.booked;
+    const out = [];
+    for (let i = 0; i < s.length; i++) {
+      if (!(empty(s[i]) && s[i].color === "W")) continue;          // старт — лише білий порожній
+      if (big) {
+        const hasSecond = i + 1 < s.length && empty(s[i + 1]);       // другий — будь-який порожній
+        const lastWhite = !s.slice(i + 1).some((x) => empty(x) && x.color === "W");
+        if (hasSecond || lastWhite) out.push({ t: s[i].t, two: hasSecond });
+      } else {
+        out.push({ t: s[i].t, two: false });
+      }
+    }
+    if (ymd(d) === ymd(today)) {
+      const now = new Date(); const nowMin = now.getHours() * 60 + now.getMinutes();
+      return out.filter((x) => tmin(x.t) >= nowMin);
+    }
+    return out;
+  }
+
+  function slotRange(slot) {
+    if (!slot.two) return slot.t;
+    const i = TIMES.indexOf(slot.t);
+    return `${slot.t}–${TIMES[i + 2] || "20:00"}`;
+  }
+
+  // ───────────────── Стан ─────────────────
+  const state = { city: "kyiv", date: null, diam: null, time: null, view: new Date(today.getFullYear(), today.getMonth(), 1) };
+
+  function firstAvailable(cityKey) {
+    for (let d = new Date(today); d <= lastDay; d.setDate(d.getDate() + 1)) {
+      if (freeSlots(cityKey, d, "").length) return new Date(d);
+    }
+    return null;
+  }
+
+  // ───────────────── Картки міст на головній ─────────────────
+  function skyline(cityKey) {
+    const [skyA, skyB, b1, b2] = CITY_THEME[cityKey];
+    const r = rng(hashStr("sky" + cityKey));
+    let back = "", front = "";
+    for (let x = -10; x < 620; ) { const w = 26 + r() * 46, h = 90 + r() * 120; back += `<rect x='${x | 0}' y='${(300 - h) | 0}' width='${w | 0}' height='${h | 0}'/>`; x += w + 2; }
+    for (let x = -20; x < 620; ) {
+      const w = 30 + r() * 60, h = 50 + r() * 150; front += `<rect x='${x | 0}' y='${(300 - h) | 0}' width='${w | 0}' height='${h | 0}'/>`;
+      for (let wy = 300 - h + 12; wy < 290; wy += 16) for (let wx = x + 7; wx < x + w - 8; wx += 12) if (r() < 0.55) front += `<rect class='w' x='${wx | 0}' y='${wy | 0}' width='5' height='7'/>`;
+      x += w + 4;
+    }
+    const svg = `<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 600 300' preserveAspectRatio='xMidYMax slice'><defs><linearGradient id='g' x1='0' y1='0' x2='0' y2='1'><stop offset='0' stop-color='${skyA}'/><stop offset='1' stop-color='${skyB}'/></linearGradient><style>.w{fill:#fff3c4;opacity:.55}</style></defs><rect width='600' height='300' fill='url(#g)'/><g fill='${b2}' opacity='.75'>${back}</g><g fill='${b1}'>${front}</g></svg>`;
+    return `url("data:image/svg+xml;utf8,${encodeURIComponent(svg)}")`;
+  }
+
+  function renderCityCards() {
+    const box = $("#cityCards");
+    box.innerHTML = "";
+    for (const c of CITIES) {
+      const card = document.createElement("div");
+      card.className = "city";
+      card.innerHTML = `<div class="img"><span class="name">${c.short}</span></div>
+        <button class="go" type="button">Онлайн-запис <span>→</span></button>`;
+      // Справжнє фото: покладіть web/img/<key>.jpg — воно перекриє намальований фон.
+      card.querySelector(".img").style.backgroundImage = `url("img/${c.key}.jpg"), ${skyline(c.key)}`;
+      card.querySelector(".go").addEventListener("click", () => openOnline(c.key));
+      box.appendChild(card);
+    }
+  }
+
+  // ───────────────── Онлайн-запис: рендер ─────────────────
+  function renderAddresses() {
+    const box = $("#addrList");
+    box.innerHTML = "";
+    for (const c of CITIES) {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = "addr" + (state.city === c.key ? " sel" : "");
+      b.setAttribute("aria-pressed", state.city === c.key);
+      b.innerHTML = `<span class="dot"></span><span>${c.name}${c.addr ? `<small>${c.addr}</small>` : ""}</span>`;
+      b.addEventListener("click", () => selectCity(c.key));
+      box.appendChild(b);
+    }
+  }
+
+  function renderCalendar() {
+    const cal = $("#cal");
+    const v = state.view;
+    const minView = new Date(today.getFullYear(), today.getMonth(), 1);
+    const maxView = new Date(lastDay.getFullYear(), lastDay.getMonth(), 1);
+    const monthOpts = [];
+    for (let m = new Date(minView); m <= maxView; m.setMonth(m.getMonth() + 1)) monthOpts.push(new Date(m));
+
+    let html = `<div class="cal-head">
+      <button class="arr" type="button" data-nav="-1" ${v <= minView ? "disabled" : ""} aria-label="Попередній місяць">◀</button>
+      <div class="mid">
+        <button class="home" type="button" data-home aria-label="Сьогодні"><svg width="15" height="15" viewBox="0 0 24 24" fill="#666"><path d="M12 3l9 8h-3v9h-5v-6h-2v6H6v-9H3z"/></svg></button>
+        <select aria-label="Місяць">${monthOpts.map((m) => `<option value="${m.getFullYear()}-${m.getMonth()}" ${m.getMonth() === v.getMonth() && m.getFullYear() === v.getFullYear() ? "selected" : ""}>${MONTHS_UA[m.getMonth()]}</option>`).join("")}</select>
+        <span>${v.getFullYear()}</span>
+      </div>
+      <button class="arr" type="button" data-nav="1" ${v >= maxView ? "disabled" : ""} aria-label="Наступний місяць">▶</button>
+    </div><table><thead><tr>${["Пнд","Втр","Срд","Чтв","Птн","Сбт","Ндл"].map((d) => `<th>${d}</th>`).join("")}</tr></thead><tbody>`;
+
+    const start = new Date(v);
+    start.setDate(1 - ((v.getDay() + 6) % 7)); // понеділок першого тижня
+    for (let w = 0; w < 6; w++) {
+      html += "<tr>";
+      for (let i = 0; i < 7; i++) {
+        const d = new Date(start); d.setDate(start.getDate() + w * 7 + i);
+        const inMonth = d.getMonth() === v.getMonth();
+        const inRange = d >= today && d <= lastDay;
+        const has = inRange && inMonth && freeSlots(state.city, d, "").length > 0;
+        const cls = [
+          state.date && ymd(d) === ymd(state.date) && inMonth ? "sel" : "",
+          ymd(d) === ymd(today) && inMonth ? "today" : "",
+          inRange && inMonth && !has ? "full" : "",
+        ].join(" ").trim();
+        const title = inRange && inMonth && !has ? ' title="Немає вільного часу"' : "";
+        html += `<td class="${inMonth ? "" : "out"}"><button type="button" class="${cls}" data-date="${ymd(d)}" ${has ? "" : "disabled"}${title}>${d.getDate()}</button></td>`;
+      }
+      html += "</tr>";
+    }
+    html += "</tbody></table>";
+    cal.innerHTML = html;
+
+    cal.querySelectorAll("[data-nav]").forEach((b) => b.addEventListener("click", () => {
+      state.view = new Date(v.getFullYear(), v.getMonth() + Number(b.dataset.nav), 1); renderCalendar();
+    }));
+    cal.querySelector("[data-home]").addEventListener("click", () => { state.view = new Date(minView); renderCalendar(); });
+    cal.querySelector("select").addEventListener("change", (e) => {
+      const [y, m] = e.target.value.split("-").map(Number); state.view = new Date(y, m, 1); renderCalendar();
+    });
+    cal.querySelectorAll("[data-date]").forEach((b) => b.addEventListener("click", () => {
+      const [y, m, dd] = b.dataset.date.split("-").map(Number);
+      state.date = new Date(y, m - 1, dd); state.time = null; renderAll();
+    }));
+  }
+
+  function renderDiameters() {
+    const box = $("#diamChips");
+    box.innerHTML = "";
+    for (const [val, label] of DIAMETERS) {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = "chip" + (state.diam === val ? " sel" : "");
+      b.textContent = label;
+      b.addEventListener("click", () => { state.diam = val; renderAll(); });
+      box.appendChild(b);
+    }
+    $("#bigHint").hidden = !needsTwoSlots(state.city, state.diam);
+  }
+
+  function renderTimes() {
+    const box = $("#times");
+    box.innerHTML = "";
+    if (!state.date) { box.className = "times"; box.innerHTML = `<div class="empty" style="grid-column:1/-1">Оберіть дату в календарі.</div>`; return; }
+    const slots = freeSlots(state.city, state.date, state.diam || "");
+    const big = needsTwoSlots(state.city, state.diam);
+    box.className = "times" + (big ? " wide" : "");
+    if (state.time && !slots.some((s) => s.t === state.time)) state.time = null;
+    if (!slots.length) {
+      box.innerHTML = `<div class="empty" style="grid-column:1/-1">На ${dayLabel(state.date)} вільного часу немає${big ? " — для R20+ потрібні 2 вільні слоти поспіль" : ""}. Оберіть іншу дату.</div>`;
+      return;
+    }
+    for (const s of slots) {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = "tpill" + (state.time === s.t ? " sel" : "");
+      b.textContent = slotRange(s);
+      b.addEventListener("click", () => { state.time = s.t; renderTimes(); renderSummary(); });
+      box.appendChild(b);
+    }
+  }
+
+  function currentSlot() {
+    if (!state.date || !state.time) return null;
+    return freeSlots(state.city, state.date, state.diam || "").find((s) => s.t === state.time) || null;
+  }
+
+  function normPhone(v) {
+    let d = (v || "").replace(/\D/g, "");
+    if (d.startsWith("380")) d = d.slice(2);
+    else if (d.startsWith("80")) d = d.slice(1);
+    if (d.length === 9 && !d.startsWith("0")) d = "0" + d;
+    return /^0\d{9}$/.test(d) ? "38" + d : null;   // 380XXXXXXXXX — як у таблиці
+  }
+  const fmtPhone = (p) => `+${p.slice(0, 2)} (${p.slice(2, 5)}) ${p.slice(5, 8)}-${p.slice(8, 10)}-${p.slice(10)}`;
+
+  function renderSummary() {
+    const c = cityBy(state.city);
+    const slot = currentSlot();
+    const diamLabel = state.diam === null ? null : (DIAMETERS.find(([v]) => v === state.diam) || [])[1];
+    const parts = [`<b>${c.name}</b>`];
+    parts.push(state.date ? dayLabel(state.date) : `<span style="color:#aaa">дата</span>`);
+    parts.push(slot ? `<b>${slotRange(slot)}</b>${slot.two ? " (2 слоти)" : ""}` : `<span style="color:#aaa">час</span>`);
+    parts.push(diamLabel ? diamLabel : `<span style="color:#aaa">діаметр</span>`);
+    $("#summary").innerHTML = "Ваш запис: " + parts.join(" · ");
+    $("#fCar").hidden = c.layout !== "full";
+    $("#submitBtn").disabled = !(slot && state.diam !== null && normPhone($("#phone").value));
+  }
+
+  function renderAll() { renderAddresses(); renderCalendar(); renderDiameters(); renderTimes(); renderSummary(); }
+
+  function selectCity(key) {
+    state.city = key;
+    state.time = null;
+    if (!state.date || !freeSlots(key, state.date, "").length) {
+      state.date = firstAvailable(key);
+      if (state.date) state.view = new Date(state.date.getFullYear(), state.date.getMonth(), 1);
+    }
+    renderAll();
+  }
+
+  // ───────────────── Запис ─────────────────
+  function book() {
+    const slot = currentSlot();                      // повторна перевірка, як у боті перед записом
+    const phone = normPhone($("#phone").value);
+    if (!slot || !phone || state.diam === null) { renderAll(); return; }
+    const c = cityBy(state.city);
+    const times = slot.two ? [slot.t, TIMES[TIMES.indexOf(slot.t) + 1]] : [slot.t];
+    const rec = {
+      city: c.key, date: ymd(state.date), times, phone,
+      name: $("#name").value.trim(), order: $("#order").value.trim(),
+      diameter: state.diam, car: c.layout === "full" ? $("#car").value : "", created: new Date().toISOString(),
+    };
+    demoBookings.push(rec);
+    saveDemo(demoBookings);
+
+    const rows = [
+      ["Адреса", c.name], ["Дата", dayLabel(state.date)], ["Час", slotRange(slot) + (slot.two ? " (2 слоти)" : "")],
+      ["Діаметр", (DIAMETERS.find(([v]) => v === state.diam) || [])[1]], ["Телефон", fmtPhone(phone)],
+    ];
+    if (rec.name) rows.push(["Ім'я", rec.name]);
+    if (rec.order) rows.push(["Замовлення", rec.order]);
+    if (rec.car) rows.push(["Тип авто", $("#car").selectedOptions[0].textContent]);
+    $("#mDetails").innerHTML = rows.map(([k, v]) => `<dt>${k}</dt><dd>${escapeHtml(v)}</dd>`).join("");
+    $("#modal").classList.add("open");
+    $("#mClose").focus();
+
+    state.time = null;
+    renderAll();
+  }
+  function escapeHtml(s) { return String(s).replace(/[&<>"']/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[ch])); }
+
+  // ───────────────── Маршрутизація ─────────────────
+  function openOnline(cityKey) {
+    location.hash = "online" + (cityKey ? "/" + cityKey : "");
+  }
+  function route() {
+    const h = location.hash.replace(/^#/, "");
+    const online = h.startsWith("online");
+    $("#view-main").hidden = online;
+    $("#view-online").hidden = !online;
+    document.body.classList.toggle("online", online);
+    if (online) {
+      const key = h.split("/")[1];
+      selectCity(cityBy(key) ? key : state.city);
+      document.title = "Онлайн-запис на шиномонтаж — REZINA.CC";
+    } else {
+      document.title = "Шиномонтаж — REZINA.CC";
+    }
+    window.scrollTo({ top: 0 });
+  }
+
+  // ───────────────── Події ─────────────────
+  document.addEventListener("click", (e) => {
+    const r = e.target.closest("[data-route]");
+    if (r) { e.preventDefault(); location.hash = r.dataset.route === "main" ? "" : r.dataset.route; route(); return; }
+    if (e.target.closest("[data-noop]")) { e.preventDefault(); return; }
+    if (e.target.closest("[data-go-online]")) openOnline();
+  });
+  window.addEventListener("hashchange", route);
+  $("#phone").addEventListener("input", () => { $("#fPhone").classList.remove("err"); renderSummary(); });
+  $("#phone").addEventListener("blur", () => {
+    const p = normPhone($("#phone").value);
+    if (p) $("#phone").value = fmtPhone(p);
+    else if ($("#phone").value.trim()) $("#fPhone").classList.add("err");
+  });
+  $("#bookForm").addEventListener("submit", (e) => { e.preventDefault(); book(); });
+  $("#mClose").addEventListener("click", () => $("#modal").classList.remove("open"));
+  $("#modal").addEventListener("click", (e) => { if (e.target.id === "modal") $("#modal").classList.remove("open"); });
+  document.addEventListener("keydown", (e) => { if (e.key === "Escape") $("#modal").classList.remove("open"); });
+  $("#resetDemo").addEventListener("click", () => { demoBookings = []; saveDemo([]); renderAll(); });
+
+  renderCityCards();
+  state.date = firstAvailable(state.city);
+  if (state.date) state.view = new Date(state.date.getFullYear(), state.date.getMonth(), 1);
+  route();
+})();
+</script>
+</body>
+</html>
