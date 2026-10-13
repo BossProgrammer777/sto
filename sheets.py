@@ -26,7 +26,7 @@ import logging
 import re
 import time as _time
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 
 import gspread
 from google.oauth2.service_account import Credentials
@@ -41,10 +41,31 @@ SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
 
 _TIME_RE = re.compile(r"^(\d{1,2}):(\d{2})(?::\d{2})?$")
 _DATE_IN_CELL_RE = re.compile(r"\b(\d{2}\.\d{2}\.\d{4})\b")
+_DOW_TOKENS = {"пн", "вт", "ср", "чт", "пт", "сб", "вс", "нд"}
+_SERIAL_RE = re.compile(r"(\d{2})[,.]?(\d{3})(?:[.,]0+)?")
+_SERIAL_EPOCH = date(1899, 12, 30)  # нулевой день дат Google Sheets
+_logged_maps: set[str] = set()
 
 MONTH_CACHE_TTL = 45      # сек — кеш прочитанного месячного листа (значения+цвета)
 VAL_CACHE_TTL = 6 * 3600  # сек — кеш значений выпадающих списков (меняются редко)
 TITLES_CACHE_TTL = 300    # сек — кеш списка листов (чтобы замечать новый месяц)
+
+
+def _row_date(md: "MonthData", r: int, start_col: int, width: int) -> str | None:
+    """Дата строки-заголовка дня в блоке («дд.мм.гггг») или None.
+    Понимает и ячейку, у которой слетел формат даты и видно число (напр. 46300)."""
+    for c in range(start_col, start_col + width):
+        m = _DATE_IN_CELL_RE.search(md.val(r, c))
+        if m:
+            return m.group(1)
+    if md.val(r, start_col).strip().lower() in _DOW_TOKENS:
+        raw = md.val(r, start_col + 1).replace("\xa0", "").replace(" ", "").strip()
+        m = _SERIAL_RE.fullmatch(raw)
+        if m:
+            n = int(m.group(1) + m.group(2))
+            if 40000 <= n <= 60000:
+                return (_SERIAL_EPOCH + timedelta(days=n)).strftime("%d.%m.%Y")
+    return None
 
 
 class SheetError(Exception):
@@ -194,11 +215,12 @@ class SheetsClient:
         self._month_cache[name] = (_time.time(), md)
         return md
 
-    def _block_start_col(self, md: MonthData, city: config.City) -> tuple[int, int]:
+    def _block_map(self, md: MonthData) -> tuple[int, dict[str, int]]:
         """
-        (start_col, header_row) блока города. Блоки определяем по строке-шапке,
-        где несколько раз встречается «Время»; сопоставляем слева направо
-        порядку городов в config.CITIES.
+        (header_row, {ключ города: колонка начала блока}).
+        Блоки — колонки «Время» в строке-шапке. Город блока определяем по
+        заголовку над ним (City.labels, затем City.alt_labels). Если заголовок
+        не прочитался, а блоков столько же, сколько городов, — по порядку.
         """
         header_row = None
         starts: list[int] = []
@@ -211,14 +233,45 @@ class SheetsClient:
         if header_row is None:
             raise SheetError("Не найдена строка-шапка с колонками «Время»")
 
-        order = list(config.CITIES.keys())
-        if len(starts) < len(order):
-            log.warning("Найдено блоков «Время»: %d, городов: %d", len(starts), len(order))
-        try:
-            idx = order.index(city.key)
-            return starts[idx], header_row
-        except (ValueError, IndexError) as e:
-            raise SheetError(f"Не удалось сопоставить блок города «{city.title}»") from e
+        titles = []
+        for i, s in enumerate(starts):
+            end = min(s + 8, starts[i + 1]) if i + 1 < len(starts) else s + 8
+            titles.append(" ".join(md.val(r, c) for r in range(header_row)
+                                   for c in range(s, end)).lower())
+
+        keys = list(config.CITIES)
+        found: dict[str, int] = {}
+        taken: set[int] = set()
+        for attr in ("labels", "alt_labels"):
+            for key in keys:
+                tokens = getattr(config.CITIES[key], attr)
+                if key in found or not tokens:
+                    continue
+                hits = [i for i, t in enumerate(titles)
+                        if i not in taken and any(tok in t for tok in tokens)]
+                if len(hits) == 1:
+                    found[key] = hits[0]
+                    taken.add(hits[0])
+        if len(starts) == len(keys):  # запасной вариант — по порядку блоков
+            for i, key in enumerate(keys):
+                if key not in found and i not in taken:
+                    found[key] = i
+                    taken.add(i)
+
+        mapping = {key: starts[i] for key, i in found.items()}
+        sig = f"{md.title}:{sorted(mapping.items())}"
+        if sig not in _logged_maps:
+            _logged_maps.add(sig)
+            log.info("Лист «%s»: блоки городов %s", md.title,
+                     {k: gspread.utils.rowcol_to_a1(1, c + 1)[:-1] for k, c in mapping.items()})
+        return header_row, mapping
+
+    def _block_start_col(self, md: MonthData, city: config.City) -> tuple[int, int]:
+        """(start_col, header_row) блока города."""
+        header_row, mapping = self._block_map(md)
+        if city.key not in mapping:
+            raise SheetError(f"Не найден блок «{city.title}» на листе {md.title}")
+        return mapping[city.key], header_row
 
     def _date_section(self, md: MonthData, start_col: int, width: int,
                       d: date) -> tuple[int, int]:
@@ -226,11 +279,9 @@ class SheetsClient:
         target = d.strftime("%d.%m.%Y")
         date_rows: list[tuple[int, str]] = []
         for r in range(md.nrows):
-            for c in range(start_col, start_col + width):
-                m = _DATE_IN_CELL_RE.search(md.val(r, c))
-                if m:
-                    date_rows.append((r, m.group(1)))
-                    break
+            ds = _row_date(md, r, start_col, width)
+            if ds:
+                date_rows.append((r, ds))
         start = next((r for r, ds in date_rows if ds == target), None)
         if start is None:
             raise SheetError(f"Дата «{target}» не найдена на листе {md.title}")
@@ -400,14 +451,12 @@ class SheetsClient:
         """Список (строка_даты, дата) для блока города, сверху вниз."""
         out: list[tuple[int, date]] = []
         for r in range(md.nrows):
-            for c in range(start_col, start_col + width):
-                m = _DATE_IN_CELL_RE.search(md.val(r, c))
-                if m:
-                    try:
-                        out.append((r, datetime.strptime(m.group(1), "%d.%m.%Y").date()))
-                    except ValueError:
-                        pass
-                    break
+            ds = _row_date(md, r, start_col, width)
+            if ds:
+                try:
+                    out.append((r, datetime.strptime(ds, "%d.%m.%Y").date()))
+                except ValueError:
+                    pass
         return out
 
     @staticmethod

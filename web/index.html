@@ -82,11 +82,12 @@
   .banner { display: block; width: 100%; max-width: 1550px; height: auto; background: var(--banner); }
 
   /* ── картки міст ── */
-  .cities { display: grid; grid-template-columns: repeat(5, minmax(0, 293px)); gap: 15px; margin: 70px 0 60px; }
+  .cities { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 15px; margin: 70px 0 60px; }
+  .city .name small { display: block; font-size: 15px; font-weight: 500; opacity: .95; margin-bottom: 2px; }
   .city { background: #fff; border-radius: 8px; box-shadow: 0 0 12px rgba(0,0,0,.09); padding: 3px; overflow: hidden; }
   .city .img { position: relative; height: 210px; border-radius: 6px 6px 0 0; background-size: cover; background-position: center bottom; overflow: hidden; }
   .city .img::after { content: ""; position: absolute; inset: 0; background: linear-gradient(to top, rgba(30,60,160,.75), rgba(30,60,160,0) 60%); }
-  .city .name { position: absolute; left: 16px; bottom: 10px; z-index: 1; color: #fff; font: 700 44px/1.05 Roboto, Arial, sans-serif; text-shadow: 0 2px 6px rgba(0,0,0,.35); }
+  .city .name { position: absolute; left: 16px; bottom: 10px; z-index: 1; color: #fff; font: 700 38px/1.05 Roboto, Arial, sans-serif; text-shadow: 0 2px 6px rgba(0,0,0,.35); }
   .city .go { display: flex; align-items: center; justify-content: space-between; width: 100%; border: 0; background: #fff; color: var(--link);
               font-size: 16px; font-weight: 500; padding: 13px 14px 11px; cursor: pointer; border-top: 1px solid #eef2f6; }
   .city .go:hover { color: #fff; background: linear-gradient(90deg, var(--nav-a), var(--nav-c)); }
@@ -187,7 +188,6 @@
     .hlinks { margin-left: 30px; font-size: 17px; }
     .nav a { font-size: 16px; letter-spacing: .3px; }
     .nav-group { gap: 11px; }
-    .cities { grid-template-columns: repeat(5, minmax(0, 1fr)); }
   }
   @media (max-width: 1180px) {
     .phones { flex-wrap: wrap; gap: 6px 16px; }
@@ -432,7 +432,8 @@
   const CITIES = [
     { key: "kyiv",       name: "м. Київ — ПОСТ №1",      short: "Київ",       layout: "simple", addr: "" },
     { key: "sofiyivska", name: "Софіївська Борщагівка",   short: "Софіївська", layout: "simple", addr: "" },
-    { key: "kharkiv",    name: "м. Харків",               short: "Харків",     layout: "full",   addr: "" },
+    { key: "kharkiv",    name: "м. Харків — Шевченка",    short: "Харків",     sub: "Шевченка",          layout: "full", addr: "" },
+    { key: "kharkiv_maidan", name: "м. Харків — Майдан Захисників", short: "Харків", sub: "Майдан Захисників", layout: "full", addr: "" },
     { key: "lviv",       name: "м. Львів",                short: "Львів",      layout: "full",   addr: "" },
     { key: "dnipro",     name: "м. Дніпро",               short: "Дніпро",     layout: "full",   addr: "" },
   ];
@@ -458,6 +459,7 @@
     kyiv:       ["#6fa6de", "#d4e6f7", "#2f4a74", "#4c6a96"],
     sofiyivska: ["#4f97e6", "#dcefff", "#c79d5c", "#e0be82"],
     kharkiv:    ["#f2a26a", "#6b80aa", "#323d58", "#4a587a"],
+    kharkiv_maidan: ["#9ec5ef", "#e6eefb", "#3a4f7d", "#5c6f99"],
     lviv:       ["#f4c08a", "#8fb6d9", "#8e4636", "#b8644d"],
     dnipro:     ["#3d6fd1", "#a9c7f2", "#22386b", "#36508c"],
   };
@@ -490,7 +492,7 @@
     const orange = (list) => list.forEach((t) => (s[at(t)].color = "O"));
     if (cityKey === "kyiv") { orange(["9:30", "11:30", "13:30", "15:30", "17:30"]); redFrom("18:00"); }
     if (cityKey === "sofiyivska") redFrom("17:30");
-    if (cityKey === "kharkiv") redFrom("18:00");
+    if (cityKey === "kharkiv" || cityKey === "kharkiv_maidan") redFrom("18:00");
     if (cityKey === "lviv") redFrom("18:30");
     if (cityKey === "dnipro") { orange(["10:30", "12:30", "14:30", "16:30"]); redFrom("18:00"); }
     if (d.getDay() === 0) { s[0].color = "R"; s[1].color = "R"; } // неділя з 10:00
@@ -614,7 +616,7 @@
     for (const c of CITIES) {
       const card = document.createElement("div");
       card.className = "city";
-      card.innerHTML = `<div class="img"><span class="name">${c.short}</span></div>
+      card.innerHTML = `<div class="img"><span class="name">${c.sub ? `<small>${c.sub}</small>` : ""}${c.short}</span></div>
         <button class="go" type="button">Онлайн-запис <span>→</span></button>`;
       // Справжнє фото: покладіть web/img/<key>.jpg — воно перекриє намальований фон.
       card.querySelector(".img").style.backgroundImage = `url("img/${c.key}.jpg"), ${skyline(c.key)}`;
