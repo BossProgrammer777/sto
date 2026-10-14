@@ -82,12 +82,12 @@
   .banner { display: block; width: 100%; max-width: 1550px; height: auto; background: var(--banner); }
 
   /* ── картки міст ── */
-  .cities { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 15px; margin: 70px 0 60px; }
-  .city .name small { display: block; font-size: 15px; font-weight: 500; opacity: .95; margin-bottom: 2px; }
+  .cities { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 15px; margin: 70px 0 60px; }
+  .city .name small { display: block; font-size: clamp(11px, 6.2cqw, 15px); font-weight: 500; opacity: .95; margin-bottom: 2px; }
   .city { background: #fff; border-radius: 8px; box-shadow: 0 0 12px rgba(0,0,0,.09); padding: 3px; overflow: hidden; }
-  .city .img { position: relative; height: 210px; border-radius: 6px 6px 0 0; background-size: cover; background-position: center bottom; overflow: hidden; }
+  .city .img { container-type: inline-size; position: relative; height: 210px; border-radius: 6px 6px 0 0; background-size: cover; background-position: center bottom; overflow: hidden; }
   .city .img::after { content: ""; position: absolute; inset: 0; background: linear-gradient(to top, rgba(30,60,160,.75), rgba(30,60,160,0) 60%); }
-  .city .name { position: absolute; left: 16px; bottom: 10px; z-index: 1; color: #fff; font: 700 38px/1.05 Roboto, Arial, sans-serif; text-shadow: 0 2px 6px rgba(0,0,0,.35); }
+  .city .name { position: absolute; left: 16px; bottom: 10px; z-index: 1; color: #fff; font: 700 clamp(18px, 14cqw, 40px)/1.05 Roboto, Arial, sans-serif; text-shadow: 0 2px 6px rgba(0,0,0,.35); }
   .city .go { display: flex; align-items: center; justify-content: space-between; width: 100%; border: 0; background: #fff; color: var(--link);
               font-size: 16px; font-weight: 500; padding: 13px 14px 11px; cursor: pointer; border-top: 1px solid #eef2f6; }
   .city .go:hover { color: #fff; background: linear-gradient(90deg, var(--nav-a), var(--nav-c)); }
@@ -210,7 +210,6 @@
     h1.page { font-size: 32px; }
     .h1row { flex-direction: column; align-items: flex-start; }
     .cities { grid-template-columns: repeat(2, minmax(0, 1fr)); margin-top: 30px; }
-    .city .name { font-size: 30px; }
     .city .img { height: 150px; }
     .steps { grid-template-columns: 1fr; }
     .bk-title { font-size: 28px; }
@@ -430,7 +429,8 @@
 
   // ───────────────── Налаштування (як у боті: config.py) ─────────────────
   const CITIES = [
-    { key: "kyiv",       name: "м. Київ — ПОСТ №1",      short: "Київ",       layout: "simple", addr: "" },
+    { key: "kyiv",       name: "м. Київ — Деревообробна (ПОСТ №1)", short: "Київ", sub: "Деревообробна", layout: "simple", addr: "" },
+    { key: "kyiv_terekhina", name: "м. Київ — О. Терьохіна, 5/7", short: "Київ", sub: "О. Терьохіна, 5/7", layout: "simple", addr: "" },
     { key: "sofiyivska", name: "Софіївська Борщагівка",   short: "Софіївська", layout: "simple", addr: "" },
     { key: "kharkiv",    name: "м. Харків — Шевченка",    short: "Харків",     sub: "Шевченка",          layout: "full", addr: "" },
     { key: "kharkiv_maidan", name: "м. Харків — Майдан Захисників", short: "Харків", sub: "Майдан Захисників", layout: "full", addr: "" },
@@ -457,6 +457,7 @@
   const DOW_UA = ["Нд","Пн","Вт","Ср","Чт","Пт","Сб"];
   const CITY_THEME = {
     kyiv:       ["#6fa6de", "#d4e6f7", "#2f4a74", "#4c6a96"],
+    kyiv_terekhina: ["#f0b27a", "#fbe3c8", "#4a3b5c", "#6d5a80"],
     sofiyivska: ["#4f97e6", "#dcefff", "#c79d5c", "#e0be82"],
     kharkiv:    ["#f2a26a", "#6b80aa", "#323d58", "#4a587a"],
     kharkiv_maidan: ["#9ec5ef", "#e6eefb", "#3a4f7d", "#5c6f99"],
@@ -490,7 +491,7 @@
     const at = (t) => TIMES.indexOf(t);
     const redFrom = (t) => { for (let i = at(t); i < s.length; i++) s[i].color = "R"; };
     const orange = (list) => list.forEach((t) => (s[at(t)].color = "O"));
-    if (cityKey === "kyiv") { orange(["9:30", "11:30", "13:30", "15:30", "17:30"]); redFrom("18:00"); }
+    if (cityKey === "kyiv" || cityKey === "kyiv_terekhina") { orange(["9:30", "11:30", "13:30", "15:30", "17:30"]); redFrom("18:00"); }
     if (cityKey === "sofiyivska") redFrom("17:30");
     if (cityKey === "kharkiv" || cityKey === "kharkiv_maidan") redFrom("18:00");
     if (cityKey === "lviv") redFrom("18:30");
