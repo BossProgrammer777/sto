@@ -16,6 +16,7 @@ BTN_DELETE = "🗑 Удалить запись"
 BTN_MOVE = "🔁 Перенести"
 BTN_MENU = "⬅️ В меню"
 BTN_YES_DELETE = "✅ Да, удалить"
+BTN_NO_STORAGE = "⏭ Без хранения"
 
 
 def _chunk(items: list[str], per_row: int) -> list[list[str]]:
@@ -93,3 +94,16 @@ def actions_kb() -> ReplyKeyboardMarkup:
 def confirm_delete_kb() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup([[BTN_YES_DELETE], [BTN_BACK]],
                                resize_keyboard=True, one_time_keyboard=True)
+
+
+# ── Хранение шин ──
+
+def storage_ask_kb() -> ReplyKeyboardMarkup:
+    return ReplyKeyboardMarkup([[BTN_NO_STORAGE], [BTN_BACK, BTN_CANCEL]], resize_keyboard=True)
+
+
+def storage_pick_kb(labels: list[str]) -> ReplyKeyboardMarkup:
+    rows = [[lbl] for lbl in labels]
+    rows.append([BTN_NO_STORAGE])
+    rows.append([BTN_BACK, BTN_CANCEL])
+    return ReplyKeyboardMarkup(rows, resize_keyboard=True, one_time_keyboard=True)

@@ -10,6 +10,7 @@ Telegram-бот записи на шиномонтаж (помощник опе�
 from __future__ import annotations
 
 import asyncio
+import html
 import logging
 import re
 
@@ -23,6 +24,7 @@ import config
 import calendar_utils as cal
 import keyboards as kb
 from sheets import SheetsClient, SheetError
+from storage import StorageClient, group_message, place_label
 
 logging.basicConfig(
     format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
@@ -33,9 +35,10 @@ log = logging.getLogger("shino-bot")
 # Стейты диалога
 (SELECT_CITY, SELECT_DATE, SELECT_TIME, COLLECT, CONFIRM,
  MENU, SEARCH_QUERY, SEARCH_PICK, ACTION, CONFIRM_DELETE,
- RS_CITY, RS_DATE, RS_TIME, SELECT_DIAMETER) = range(14)
+ RS_CITY, RS_DATE, RS_TIME, SELECT_DIAMETER, STORAGE_ASK, STORAGE_PICK) = range(16)
 
 sheets: SheetsClient  # инициализируется в main()
+storage: StorageClient | None = None  # таблицы хранения (если настроены)
 
 
 # ───────────────────────────── Вспомогательное ─────────────────────────────
@@ -77,7 +80,13 @@ def _summary_text(ud: dict) -> str:
     ]
     for key, label in labels:
         if d.get(key):
-            lines.append(f"{label}: <b>{d[key]}</b>")
+            lines.append(f"{label}: <b>{html.escape(str(d[key]))}</b>")
+    st = ud.get("storage")
+    if st:
+        where = f" ({html.escape(place_label(st))})" if place_label(st) else ""
+        lines.append(f"📦 Хранение: <b>{html.escape(st.name)}</b>{where}")
+        if st.tires:
+            lines.append(f"<i>{html.escape(st.tires)}</i>")
     return "\n".join(lines)
 
 
@@ -226,6 +235,8 @@ async def select_time(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
     city: config.City = context.user_data["city"]
     context.user_data["fields"] = list(config.LAYOUTS[city.layout]["ask_fields"])
     context.user_data["field_idx"] = 0
+    context.user_data["storage_asked"] = False
+    context.user_data.pop("storage", None)
     # data уже содержит diameter (выбран на шаге диаметра) — не сбрасываем
     return await _ask_current_field(update, context)
 
@@ -236,6 +247,8 @@ async def _ask_current_field(update: Update, context: ContextTypes.DEFAULT_TYPE)
     fields = ud["fields"]
 
     if idx >= len(fields):
+        if _storage_on(ud["city"]) and not ud.get("storage_asked"):
+            return await _ask_storage(update, context)
         await update.message.reply_text(_summary_text(ud), parse_mode="HTML",
                                         reply_markup=kb.confirm_kb())
         return CONFIRM
@@ -311,6 +324,9 @@ async def confirm(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     text = update.message.text.strip()
     ud = context.user_data
     if text == kb.BTN_BACK:
+        if _storage_on(ud["city"]):
+            ud["storage_asked"] = False
+            return await _ask_storage(update, context)
         ud["field_idx"] = len(ud["fields"]) - 1
         ud["data"].pop(ud["fields"][-1], None)
         return await _ask_current_field(update, context)
@@ -346,12 +362,106 @@ async def confirm(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         await update.message.reply_text(f"⚠️ Ошибка при сохранении: {e}")
         return ConversationHandler.END
 
+    note = await _notify_group(context, city, ud)
     await update.message.reply_text(
-        "✅ <b>Записано!</b>\n\n" + _summary_text(ud),
+        "✅ <b>Записано!</b>\n\n" + _summary_text(ud) + note,
         parse_mode="HTML",
     )
     await update.message.reply_text("Для новой записи нажмите /start")
     return ConversationHandler.END
+
+
+# ───────────────── Хранение шин → группа филиала ─────────────────
+
+def _storage_on(city: config.City) -> bool:
+    return storage is not None and city.key in config.STORAGE
+
+
+def _storage_label(c) -> str:
+    where = place_label(c)
+    return f"{c.name} · {where}" if where else c.name
+
+
+async def _ask_storage(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    context.user_data.pop("storage", None)
+    await update.message.reply_text(
+        "📦 Клиент с хранения?\nВведите фамилию (можно часть) — найду его шины в таблице хранения.",
+        reply_markup=kb.storage_ask_kb())
+    return STORAGE_ASK
+
+
+async def _storage_done(update: Update, context: ContextTypes.DEFAULT_TYPE, client) -> int:
+    context.user_data["storage"] = client
+    context.user_data["storage_asked"] = True
+    return await _ask_current_field(update, context)  # → сводка и подтверждение
+
+
+async def storage_ask(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    ud = context.user_data
+    text = update.message.text.strip()
+    if text == kb.BTN_BACK:  # назад к последнему полю (МОП)
+        ud["field_idx"] = len(ud["fields"]) - 1
+        ud["data"].pop(ud["fields"][-1], None)
+        return await _ask_current_field(update, context)
+    if text == kb.BTN_NO_STORAGE:
+        return await _storage_done(update, context, None)
+    if len(text) < 2:
+        await update.message.reply_text("Введите хотя бы 2 буквы фамилии.", reply_markup=kb.storage_ask_kb())
+        return STORAGE_ASK
+    try:
+        hits, total = await _run(storage.search, ud["city"].key, text)
+    except Exception as e:  # noqa: BLE001
+        log.exception("Таблица хранения недоступна")
+        await update.message.reply_text(
+            f"⚠️ Не удалось прочитать таблицу хранения: {e}\nМожно продолжить «{kb.BTN_NO_STORAGE}».",
+            reply_markup=kb.storage_ask_kb())
+        return STORAGE_ASK
+    if not hits:
+        await update.message.reply_text(
+            f"😔 «{text}» в хранении не нашёл. Попробуйте иначе или нажмите «{kb.BTN_NO_STORAGE}».",
+            reply_markup=kb.storage_ask_kb())
+        return STORAGE_ASK
+    ud["_st_hits"] = hits
+    ud["_st_labels"] = [_storage_label(c) for c in hits]
+    more = f" (показаны первые {len(hits)} из {total} — уточните фамилию или имя)" if total > len(hits) else ""
+    await update.message.reply_text(f"Найдено: {total}{more}. Выберите клиента:",
+                                    reply_markup=kb.storage_pick_kb(ud["_st_labels"]))
+    return STORAGE_PICK
+
+
+async def storage_pick(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    ud = context.user_data
+    text = update.message.text.strip()
+    if text == kb.BTN_BACK:
+        return await _ask_storage(update, context)
+    if text == kb.BTN_NO_STORAGE:
+        return await _storage_done(update, context, None)
+    labels = ud.get("_st_labels", [])
+    if text in labels:
+        return await _storage_done(update, context, ud["_st_hits"][labels.index(text)])
+    return await storage_ask(update, context)  # ввели другую фамилию — ищем заново
+
+
+async def _notify_group(context: ContextTypes.DEFAULT_TYPE, city: config.City, ud: dict) -> str:
+    """Отправить запись с хранением в группу филиала. Возвращает пометку для оператора."""
+    st = ud.get("storage")
+    cfg = config.STORAGE.get(city.key)
+    if not st or not cfg or not cfg.chat_id:
+        return ""
+    text = group_message(st, city=city, d=ud["date"], time_str=ud["time"], data=ud["data"])
+    try:
+        await context.bot.send_message(cfg.chat_id, text)
+        return "\n\n📨 Отправлено в группу филиала."
+    except Exception as e:  # noqa: BLE001
+        log.exception("Не удалось отправить в группу %s", cfg.chat_id)
+        return f"\n\n⚠️ Запись сделана, но в группу не отправилось: {html.escape(str(e))}"
+
+
+async def chat_id_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """/chatid — показать ID текущего чата (чтобы подключить группу филиала)."""
+    chat = update.effective_chat
+    title = f"\n«{chat.title}»" if chat.title else ""
+    await update.message.reply_text(f"ID этого чата: {chat.id}{title}")
 
 
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -611,6 +721,8 @@ def build_app() -> Application:
             SELECT_TIME: [cancel_h, MessageHandler(filters.TEXT & ~filters.COMMAND, select_time)],
             COLLECT: [cancel_h, MessageHandler(filters.TEXT & ~filters.COMMAND, collect)],
             CONFIRM: [cancel_h, MessageHandler(filters.TEXT & ~filters.COMMAND, confirm)],
+            STORAGE_ASK: [cancel_h, MessageHandler(filters.TEXT & ~filters.COMMAND, storage_ask)],
+            STORAGE_PICK: [cancel_h, MessageHandler(filters.TEXT & ~filters.COMMAND, storage_pick)],
             SEARCH_QUERY: [cancel_h, MessageHandler(filters.TEXT & ~filters.COMMAND, search_query)],
             SEARCH_PICK: [cancel_h, MessageHandler(filters.TEXT & ~filters.COMMAND, search_pick)],
             ACTION: [cancel_h, MessageHandler(filters.TEXT & ~filters.COMMAND, action)],
@@ -626,6 +738,7 @@ def build_app() -> Application:
         allow_reentry=True,
     )
     app.add_handler(conv)
+    app.add_handler(CommandHandler("chatid", chat_id_cmd))
     app.add_error_handler(on_error)
     return app
 
@@ -634,6 +747,10 @@ def main() -> None:
     global sheets
     log.info("Инициализация Google Sheets…")
     sheets = SheetsClient()
+    if config.STORAGE:
+        global storage
+        storage = StorageClient(sheets.gc)
+        log.info("Хранение шин подключено для: %s", ", ".join(config.STORAGE))
     log.info("Запуск бота (polling)…")
     app = build_app()
     app.run_polling(allowed_updates=Update.ALL_TYPES)

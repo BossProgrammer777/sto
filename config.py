@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import os
+import re
 from dataclasses import dataclass
 
 from dotenv import load_dotenv
@@ -204,3 +205,36 @@ SLOT_STEP_MIN = 30
 
 # Формат времени в таблице: «9:00» (без ведущего нуля) — подтверждено калибровкой.
 TIME_FORMAT_LEADING_ZERO = False
+
+
+# ─────────────────────── Хранение шин → группа филиала ───────────────────────
+# Для поста можно подключить таблицу хранения шин и группу филиала в Telegram.
+# Тогда при записи бот спрашивает «Клиент с хранения?», ищет его по ФИО и после
+# записи пишет в группу: клиент, ряд/место, шины, дата и время.
+# Переменные окружения (KEY — ключ поста в верхнем регистре, напр. KYIV):
+#   STORAGE_<KEY>_SHEET — ID или ссылка на Google-таблицу хранения
+#   STORAGE_<KEY>_TAB   — имя листа (необязательно, по умолчанию первый)
+#   STORAGE_<KEY>_CHAT  — ID группы филиала (узнать: команда /chatid в группе)
+
+@dataclass(frozen=True)
+class StorageCfg:
+    sheet_id: str
+    tab: str
+    chat_id: int | None
+
+
+def _load_storage() -> dict[str, StorageCfg]:
+    out: dict[str, StorageCfg] = {}
+    for key in CITIES:
+        prefix = f"STORAGE_{key.upper()}_"
+        sheet = _get(prefix + "SHEET", "").strip()
+        if not sheet:
+            continue
+        m = re.search(r"/d/([A-Za-z0-9_-]+)", sheet)  # можно вставить полную ссылку
+        chat = _get(prefix + "CHAT", "").strip()
+        out[key] = StorageCfg(m.group(1) if m else sheet, _get(prefix + "TAB", "").strip(),
+                              int(chat) if chat else None)
+    return out
+
+
+STORAGE: dict[str, StorageCfg] = _load_storage()
