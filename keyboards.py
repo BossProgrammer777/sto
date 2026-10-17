@@ -17,6 +17,8 @@ BTN_MOVE = "🔁 Перенести"
 BTN_MENU = "⬅️ В меню"
 BTN_YES_DELETE = "✅ Да, удалить"
 BTN_NO_STORAGE = "⏭ Без хранения"
+BTN_ALL_SETS = "📦 Все комплекты"
+BTN_SETS_DONE = "✔️ Готово"
 
 
 def _chunk(items: list[str], per_row: int) -> list[list[str]]:
@@ -107,3 +109,11 @@ def storage_pick_kb(labels: list[str]) -> ReplyKeyboardMarkup:
     rows.append([BTN_NO_STORAGE])
     rows.append([BTN_BACK, BTN_CANCEL])
     return ReplyKeyboardMarkup(rows, resize_keyboard=True, one_time_keyboard=True)
+
+
+def storage_sets_kb(labels: list[str]) -> ReplyKeyboardMarkup:
+    rows = [[lbl] for lbl in labels]
+    rows.append([BTN_ALL_SETS, BTN_SETS_DONE])
+    rows.append([BTN_NO_STORAGE])
+    rows.append([BTN_BACK, BTN_CANCEL])
+    return ReplyKeyboardMarkup(rows, resize_keyboard=True)

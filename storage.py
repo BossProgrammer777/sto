@@ -1,9 +1,10 @@
 """
-Таблица хранения шин филиала: поиск клиента по ФИО и текст сообщения в группу.
+Таблица хранения шин филиала: поиск клиента по ФИО, комплекты и сообщение в группу.
 
 Ожидаемые колонки (ищутся по заголовку, порядок любой):
     ФИО | Ряд | Место | Шины | Комментарий
-В «Шины» может быть несколько строк (несколько комплектов).
+Комплекты клиента: каждая строка в ячейке «Шины» — отдельный комплект; если клиент
+записан в таблице несколькими строками, его комплекты собираются вместе.
 """
 
 from __future__ import annotations
@@ -21,12 +22,17 @@ CACHE_TTL = 120  # сек — таблица хранения перечитыв
 
 
 @dataclass(frozen=True)
-class StoredClient:
-    name: str
+class TireSet:
+    tires: str     # описание комплекта (одна строка из ячейки «Шины»)
     row: str
     place: str
-    tires: str
     comment: str
+
+
+@dataclass(frozen=True)
+class StoredClient:
+    name: str
+    sets: tuple[TireSet, ...]
 
 
 def _norm(s: str) -> str:
@@ -35,7 +41,7 @@ def _norm(s: str) -> str:
 
 
 def parse_rows(values: list[list[str]]) -> list[StoredClient]:
-    """Разобрать значения листа хранения в список клиентов."""
+    """Разобрать значения листа хранения в список клиентов с их комплектами."""
     header, cols = None, {}
     for i, row in enumerate(values[:10]):
         low = [c.strip().lower() for c in row]
@@ -60,12 +66,15 @@ def parse_rows(values: list[list[str]]) -> list[StoredClient]:
         j = cols.get(key)
         return r[j].strip() if j is not None and j < len(r) else ""
 
-    out = []
+    by_name: dict[str, tuple[str, list[TireSet]]] = {}
     for r in values[header + 1:]:
         name = cell(r, "name")
-        if name:
-            out.append(StoredClient(name, cell(r, "row"), cell(r, "place"), cell(r, "tires"), cell(r, "comment")))
-    return out
+        if not name:
+            continue
+        lines = [ln.strip() for ln in cell(r, "tires").splitlines() if ln.strip()] or [""]
+        sets = [TireSet(ln, cell(r, "row"), cell(r, "place"), cell(r, "comment")) for ln in lines]
+        by_name.setdefault(_norm(name), (name, []))[1].extend(sets)
+    return [StoredClient(name, tuple(sets)) for name, sets in by_name.values()]
 
 
 def search(clients: list[StoredClient], query: str, limit: int = 8) -> tuple[list[StoredClient], int]:
@@ -77,20 +86,34 @@ def search(clients: list[StoredClient], query: str, limit: int = 8) -> tuple[lis
     return hits[:limit], len(hits)
 
 
-def place_label(c: StoredClient) -> str:
-    parts = [p for p in (f"ряд {c.row}" if c.row else "", f"место {c.place}" if c.place else "") if p]
+def place_label(s: TireSet) -> str:
+    parts = [p for p in (f"ряд {s.row}" if s.row else "", f"место {s.place}" if s.place else "") if p]
     return ", ".join(parts)
+
+
+def client_label(c: StoredClient) -> str:
+    """Подпись клиента в результатах поиска."""
+    if len(c.sets) > 1:
+        return f"{c.name} · {len(c.sets)} компл."
+    where = place_label(c.sets[0])
+    return f"{c.name} · {where}" if where else c.name
+
+
+def set_lines(c: StoredClient) -> list[str]:
+    """Комплекты клиента строками; место — общей строкой, если оно у всех одно."""
+    places = {place_label(s) for s in c.sets}
+    if len(places) == 1:
+        place = places.pop()
+        return ([place] if place else []) + [s.tires for s in c.sets if s.tires]
+    return [f"{s.tires} — {place_label(s)}" if place_label(s) else s.tires for s in c.sets if s.tires or place_label(s)]
 
 
 def group_message(c: StoredClient, *, city: config.City, d, time_str: str, data: dict) -> str:
     """Сообщение в группу филиала — в том же стиле, что пишут операторы."""
-    lines = [f"покупатель ({c.name})"]
-    if place_label(c):
-        lines.append(place_label(c))
-    if c.tires:
-        lines.append(c.tires)
-    if c.comment:
-        lines.append(f"Комментарий: {c.comment}")
+    lines = [f"покупатель ({c.name})", *set_lines(c)]
+    comments = list(dict.fromkeys(s.comment for s in c.sets if s.comment))
+    if comments:
+        lines.append("Комментарий: " + "; ".join(comments))
     lines.append("")
     lines.append(f"шм+хр {d:%d.%m} {time_str}")
     tail = [city.title]

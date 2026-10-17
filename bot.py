@@ -24,7 +24,7 @@ import config
 import calendar_utils as cal
 import keyboards as kb
 from sheets import SheetsClient, SheetError
-from storage import StorageClient, group_message, place_label
+from storage import StorageClient, StoredClient, client_label, group_message, place_label, set_lines
 
 logging.basicConfig(
     format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
@@ -35,7 +35,8 @@ log = logging.getLogger("shino-bot")
 # Стейты диалога
 (SELECT_CITY, SELECT_DATE, SELECT_TIME, COLLECT, CONFIRM,
  MENU, SEARCH_QUERY, SEARCH_PICK, ACTION, CONFIRM_DELETE,
- RS_CITY, RS_DATE, RS_TIME, SELECT_DIAMETER, STORAGE_ASK, STORAGE_PICK) = range(16)
+ RS_CITY, RS_DATE, RS_TIME, SELECT_DIAMETER, STORAGE_ASK, STORAGE_PICK,
+ STORAGE_SETS) = range(17)
 
 sheets: SheetsClient  # инициализируется в main()
 storage: StorageClient | None = None  # таблицы хранения (если настроены)
@@ -83,10 +84,8 @@ def _summary_text(ud: dict) -> str:
             lines.append(f"{label}: <b>{html.escape(str(d[key]))}</b>")
     st = ud.get("storage")
     if st:
-        where = f" ({html.escape(place_label(st))})" if place_label(st) else ""
-        lines.append(f"📦 Хранение: <b>{html.escape(st.name)}</b>{where}")
-        if st.tires:
-            lines.append(f"<i>{html.escape(st.tires)}</i>")
+        lines.append(f"📦 Хранение: <b>{html.escape(st.name)}</b>")
+        lines.extend(f"<i>{html.escape(ln)}</i>" for ln in set_lines(st))
     return "\n".join(lines)
 
 
@@ -377,9 +376,6 @@ def _storage_on(city: config.City) -> bool:
     return storage is not None and city.key in config.STORAGE
 
 
-def _storage_label(c) -> str:
-    where = place_label(c)
-    return f"{c.name} · {where}" if where else c.name
 
 
 async def _ask_storage(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -422,7 +418,7 @@ async def storage_ask(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
             reply_markup=kb.storage_ask_kb())
         return STORAGE_ASK
     ud["_st_hits"] = hits
-    ud["_st_labels"] = [_storage_label(c) for c in hits]
+    ud["_st_labels"] = [client_label(c) for c in hits]
     more = f" (показаны первые {len(hits)} из {total} — уточните фамилию или имя)" if total > len(hits) else ""
     await update.message.reply_text(f"Найдено: {total}{more}. Выберите клиента:",
                                     reply_markup=kb.storage_pick_kb(ud["_st_labels"]))
@@ -438,8 +434,53 @@ async def storage_pick(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
         return await _storage_done(update, context, None)
     labels = ud.get("_st_labels", [])
     if text in labels:
-        return await _storage_done(update, context, ud["_st_hits"][labels.index(text)])
+        client = ud["_st_hits"][labels.index(text)]
+        if len(client.sets) == 1:
+            return await _storage_done(update, context, client)
+        ud["_st_client"], ud["_st_sel"] = client, set()
+        return await _ask_sets(update, context)
     return await storage_ask(update, context)  # ввели другую фамилию — ищем заново
+
+
+def _set_labels(client, sel: set[int]) -> list[str]:
+    out = []
+    for i, s in enumerate(client.sets):
+        where = f" · {place_label(s)}" if place_label(s) else ""
+        out.append(f"{'✅' if i in sel else '⬜'} {i + 1}. {s.tires or 'без описания'}{where}")
+    return out
+
+
+async def _ask_sets(update: Update, context: ContextTypes.DEFAULT_TYPE, note: str = "") -> int:
+    ud = context.user_data
+    c = ud["_st_client"]
+    text = note or (f"У клиента <b>{html.escape(c.name)}</b> на хранении комплектов: {len(c.sets)}.\n"
+                    "Отметьте, какие шины привезти, и нажмите «✔️ Готово».")
+    await update.message.reply_text(text, parse_mode="HTML",
+                                    reply_markup=kb.storage_sets_kb(_set_labels(c, ud["_st_sel"])))
+    return STORAGE_SETS
+
+
+async def storage_sets(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    ud = context.user_data
+    text = update.message.text.strip()
+    c, sel = ud["_st_client"], ud["_st_sel"]
+    if text == kb.BTN_BACK:
+        await update.message.reply_text("Выберите клиента:", reply_markup=kb.storage_pick_kb(ud["_st_labels"]))
+        return STORAGE_PICK
+    if text == kb.BTN_NO_STORAGE:
+        return await _storage_done(update, context, None)
+    if text == kb.BTN_ALL_SETS:
+        return await _storage_done(update, context, c)
+    if text == kb.BTN_SETS_DONE:
+        if not sel:
+            return await _ask_sets(update, context, "Отметьте хотя бы один комплект (или «📦 Все комплекты»).")
+        return await _storage_done(update, context, StoredClient(c.name, tuple(c.sets[i] for i in sorted(sel))))
+    m = re.match(r"^(?:✅|⬜)\s*(\d+)\.", text)
+    if m and 0 < int(m.group(1)) <= len(c.sets):
+        sel ^= {int(m.group(1)) - 1}  # отметить / снять отметку
+        marked = ", ".join(str(i + 1) for i in sorted(sel)) or "ничего"
+        return await _ask_sets(update, context, f"Отмечено: {marked}. Можно отметить ещё или нажать «✔️ Готово».")
+    return await _ask_sets(update, context, "Выберите комплект кнопкой.")
 
 
 async def _notify_group(context: ContextTypes.DEFAULT_TYPE, city: config.City, ud: dict) -> str:
@@ -723,6 +764,7 @@ def build_app() -> Application:
             CONFIRM: [cancel_h, MessageHandler(filters.TEXT & ~filters.COMMAND, confirm)],
             STORAGE_ASK: [cancel_h, MessageHandler(filters.TEXT & ~filters.COMMAND, storage_ask)],
             STORAGE_PICK: [cancel_h, MessageHandler(filters.TEXT & ~filters.COMMAND, storage_pick)],
+            STORAGE_SETS: [cancel_h, MessageHandler(filters.TEXT & ~filters.COMMAND, storage_sets)],
             SEARCH_QUERY: [cancel_h, MessageHandler(filters.TEXT & ~filters.COMMAND, search_query)],
             SEARCH_PICK: [cancel_h, MessageHandler(filters.TEXT & ~filters.COMMAND, search_pick)],
             ACTION: [cancel_h, MessageHandler(filters.TEXT & ~filters.COMMAND, action)],
