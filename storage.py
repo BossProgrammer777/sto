@@ -116,7 +116,7 @@ def group_message(c: StoredClient, *, city: config.City, d, time_str: str, data:
         lines.append("Комментарий: " + "; ".join(comments))
     lines.append("")
     lines.append(f"шм+хр {d:%d.%m} {time_str}")
-    tail = [city.title]
+    tail = [city.full_title]
     if data.get("order_number"):
         tail.append(f"заказ {data['order_number']}")
     if data.get("mop"):

@@ -94,13 +94,14 @@ LAYOUTS: dict[str, dict] = {
 }
 
 # Города, где большие шины (R20+) занимают 2 подряд слота («2 поста»).
-# Пока только Киев; Харьков добавится позже — просто впишите ключ сюда.
+# Пока только Киев Деревообробна (оба поста); Харьков добавится позже —
+# просто впишите ключ сюда.
 TWO_POST_CITIES: set[str] = {"kyiv"}
 BIG_DIAMETERS: set[str] = {"R20", "R21", "R22"}
 
 
 def needs_two_slots(city: "City", diameter: str) -> bool:
-    return city.key in TWO_POST_CITIES and (diameter or "").strip() in BIG_DIAMETERS
+    return branch_of(city).key in TWO_POST_CITIES and (diameter or "").strip() in BIG_DIAMETERS
 
 
 @dataclass(frozen=True)
@@ -113,14 +114,26 @@ class City:
     # Запасные слова — если по основным блок не нашёлся (напр. старый лист,
     # где над блоком было просто «Харьков»).
     alt_labels: tuple[str, ...] = ()
+    # Подпись поста, если у филиала их несколько («ПОСТ №1»).
+    post: str = ""
+    # Дополнительный пост филиала: ключ основного поста. Своей кнопки нет —
+    # бот сам выбирает пост; строки (даты/время) общие с основным постом.
+    parent: str = ""
+
+    @property
+    def full_title(self) -> str:
+        return f"{self.title} ({self.post})" if self.post else self.title
 
 
 # Порядок = порядок блоков в таблице (слева направо) и кнопок в боте.
 # Блок ищется по заголовку (labels); порядок — запасной вариант, если
 # заголовки не читаются.
 CITIES: dict[str, City] = {
-    "kyiv": City("kyiv", "Киев Деревообробна (ПОСТ №1)", "simple",
-                 ("деревообр",), alt_labels=("киев", "київ")),
+    "kyiv": City("kyiv", "Киев Деревообробна", "simple",
+                 ("деревообр",), alt_labels=("киев", "київ"), post="ПОСТ №1"),
+    # Заголовок блока сравнивается и без пробелов/«№»: «ПОСТ №2» → «пост2».
+    "kyiv_p2": City("kyiv_p2", "Киев Деревообробна", "simple",
+                    ("пост2", "постn2", "постno2"), post="ПОСТ №2", parent="kyiv"),
     "kyiv_terekhina": City("kyiv_terekhina", "Киев О. Терьохіна 5/7", "simple",
                            ("терьох", "терех", "терёх")),
     "sofiyivska": City("sofiyivska", "Софиевская Борщагивка", "simple",
@@ -134,11 +147,41 @@ CITIES: dict[str, City] = {
 }
 
 
+def button_cities() -> list[City]:
+    """Города для кнопок: доп. посты отдельной кнопки не имеют."""
+    return [c for c in CITIES.values() if not c.parent]
+
+
 def city_by_title(title: str) -> City | None:
-    for c in CITIES.values():
-        if c.title == title:
+    for c in button_cities():
+        if title in (c.title, c.full_title):
             return c
     return None
+
+
+def branch_of(city: City) -> City:
+    """Основной пост филиала (для доп. поста — его parent)."""
+    return CITIES[city.parent] if city.parent else city
+
+
+def posts_of(city: City) -> list[City]:
+    """Все посты филиала: основной + дополнительные."""
+    return [city] + [c for c in CITIES.values() if c.parent == city.key]
+
+
+# Филиал с двумя постами (Киев Деревообробна): R19 и больше — сначала ПОСТ №1,
+# R13–R18 — сначала ПОСТ №2. Если на «своём» посту это время занято — бот
+# берёт другой пост. РОЗВАЛ/СТО/без диаметра — как большие (сначала ПОСТ №1).
+SECOND_POST_MAX_DIAMETER = 18
+
+
+def posts_for(city: City, diameter: str) -> list[City]:
+    """Посты филиала в порядке предпочтения для этого диаметра."""
+    posts = posts_of(city)
+    m = re.fullmatch(r"[RrРр]?\s*(\d{2})", (diameter or "").strip())
+    if len(posts) > 1 and m and int(m.group(1)) <= SECOND_POST_MAX_DIAMETER:
+        posts = posts[1:] + posts[:1]
+    return posts
 
 
 def column_index(city: City, column_name: str) -> int:

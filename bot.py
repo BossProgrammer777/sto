@@ -63,10 +63,10 @@ async def _warm_cache(dates) -> None:
 
 
 def _summary_text(ud: dict) -> str:
-    city: config.City = ud["city"]
+    post: config.City = ud.get("post") or ud["city"]  # пост, куда пишем
     lines = [
         "📋 <b>Проверьте запись:</b>",
-        f"🏙 Город: <b>{city.title}</b>",
+        f"🏙 Город: <b>{post.full_title}</b>",
         f"📅 Дата: <b>{cal.date_label(ud['date'])}</b>",
         f"⏰ Время: <b>{ud['time']}</b>",
     ]
@@ -179,23 +179,26 @@ async def _show_free_times(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     diameter = ud["data"].get("diameter", "")
     await update.message.reply_text("⏳ Читаю свободные слоты…")
     try:
-        free = await _run(sheets.read_free_slots, city, d, False, diameter)
+        free_posts = await _run(sheets.free_slots_by_post, city, d, False, diameter)
     except SheetError as e:
         log.warning("Ошибка чтения слотов: %s", e)
         await update.message.reply_text(f"⚠️ Не удалось прочитать расписание: {e}")
         return await _ask_diameter(update, context)
-    if not free:
+    if not free_posts:
         note = "\n(для больших шин R20+ нужны 2 свободных слота подряд)" \
             if config.needs_two_slots(city, diameter) else ""
         await update.message.reply_text(
             f"😔 Свободных слотов на эту дату нет.{note}\n"
             "Выберите другой диаметр или дату:")
         return await _ask_diameter(update, context)
-    ud["free"] = free
+    ud["free"], ud["free_posts"] = list(free_posts), free_posts
     big = " (займёт 2 слота)" if config.needs_two_slots(city, diameter) else ""
+    posts = config.posts_of(city)
+    hint = (f"\nПост бот выберет сам: R13–R{config.SECOND_POST_MAX_DIAMETER} — сначала "
+            f"{posts[1].post}, остальное — {posts[0].post}." if len(posts) > 1 else "")
     await update.message.reply_text(
-        f"⏰ Свободное время на <b>{cal.date_label(d)}</b>{big}:",
-        parse_mode="HTML", reply_markup=kb.times_kb(free))
+        f"⏰ Свободное время на <b>{cal.date_label(d)}</b>{big}:{hint}",
+        parse_mode="HTML", reply_markup=kb.times_kb(ud["free"]))
     return SELECT_TIME
 
 
@@ -231,6 +234,7 @@ async def select_time(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
         return SELECT_TIME
 
     context.user_data["time"] = text
+    context.user_data["post"] = context.user_data["free_posts"][text]
     city: config.City = context.user_data["city"]
     context.user_data["fields"] = list(config.LAYOUTS[city.layout]["ask_fields"])
     context.user_data["field_idx"] = 0
@@ -340,17 +344,18 @@ async def confirm(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     await update.message.reply_text("💾 Сохраняю запись…", reply_markup=kb.remove_kb())
     try:
         # На всякий случай ещё раз проверим, что слот не заняли параллельно.
-        free = await _run(sheets.read_free_slots, city, ud["date"], True,
-                          ud["data"].get("diameter", ""))  # свежее чтение
-        if ud["time"] not in free:
+        free_posts = await _run(sheets.free_slots_by_post, city, ud["date"], True,
+                                ud["data"].get("diameter", ""))  # свежее чтение
+        if ud["time"] not in free_posts:
+            ud["free"], ud["free_posts"] = list(free_posts), free_posts
             await update.message.reply_text(
                 "😳 Пока вы заполняли, слот заняли. Выберите другое время:",
-                reply_markup=kb.times_kb(free),
+                reply_markup=kb.times_kb(ud["free"]),
             )
-            ud["free"] = free
             return SELECT_TIME
 
-        await _run(sheets.write_booking, city, ud["date"], ud["time"], ud["data"])
+        ud["post"] = free_posts[ud["time"]]  # пост по свежему чтению
+        await _run(sheets.write_booking, ud["post"], ud["date"], ud["time"], ud["data"])
     except SheetError as e:
         log.error("Ошибка записи: %s", e)
         await update.message.reply_text(f"⚠️ Не удалось сохранить запись: {e}\n"
@@ -489,7 +494,8 @@ async def _notify_group(context: ContextTypes.DEFAULT_TYPE, city: config.City, u
     cfg = config.STORAGE.get(city.key)
     if not st or not cfg or not cfg.chat_id:
         return ""
-    text = group_message(st, city=city, d=ud["date"], time_str=ud["time"], data=ud["data"])
+    text = group_message(st, city=ud.get("post") or city, d=ud["date"], time_str=ud["time"],
+                         data=ud["data"])
     try:
         await context.bot.send_message(cfg.chat_id, text)
         return "\n\n📨 Отправлено в группу филиала."
@@ -515,13 +521,13 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
 # ───────────────── Поиск / удаление / перенос записи ─────────────────
 
 def _booking_label(b) -> str:
-    return f"{cal.date_button(b.date)} {b.time} — {b.city.title}"
+    return f"{cal.date_button(b.date)} {b.time} — {b.city.full_title}"
 
 
 def _booking_text(b) -> str:
     lines = [
         "📋 <b>Найдена запись:</b>",
-        f"🏙 Город: <b>{b.city.title}</b>",
+        f"🏙 Город: <b>{b.city.full_title}</b>",
         f"📅 Дата: <b>{cal.date_label(b.date)}</b>",
         f"⏰ Время: <b>{b.time}</b>",
     ]
@@ -667,19 +673,20 @@ async def rs_date(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     diameter = context.user_data["selected"].data.get("diameter", "")
     await update.message.reply_text("⏳ Читаю свободные слоты…")
     try:
-        free = await _run(sheets.read_free_slots, city, d, False, diameter)
+        free_posts = await _run(sheets.free_slots_by_post, city, d, False, diameter)
     except SheetError as e:
         await update.message.reply_text(f"⚠️ {e}\nВыберите другую дату:",
                                         reply_markup=kb.dates_kb(context.user_data["rs_dates"]))
         return RS_DATE
-    if not free:
+    if not free_posts:
         await update.message.reply_text("😔 Свободных слотов нет. Другую дату:",
                                         reply_markup=kb.dates_kb(context.user_data["rs_dates"]))
         return RS_DATE
-    context.user_data["rs_free"] = free
+    context.user_data["rs_free"] = list(free_posts)
+    context.user_data["rs_free_posts"] = free_posts
     await update.message.reply_text(
         f"⏰ Свободное время на <b>{cal.date_label(d)}</b>:",
-        parse_mode="HTML", reply_markup=kb.times_kb(free))
+        parse_mode="HTML", reply_markup=kb.times_kb(context.user_data["rs_free"]))
     return RS_TIME
 
 
@@ -697,21 +704,23 @@ async def rs_time(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
 
     b = ud["selected"]
     new_city, new_d, new_time = ud["rs_city"], ud["rs_date"], text
-    if (new_city.key, new_d, new_time) == (b.city.key, b.date, b.time):
+    new_post = ud["rs_free_posts"][new_time]
+    if (new_post.key, new_d, new_time) == (b.city.key, b.date, b.time):
         await update.message.reply_text("Это тот же слот — перенос не нужен.")
         return await _show_actions(update, b)
 
     await update.message.reply_text("🔁 Переношу…", reply_markup=kb.remove_kb())
     try:
-        free = await _run(sheets.read_free_slots, new_city, new_d, True,
-                          b.data.get("diameter", ""))  # свежее
-        if new_time not in free:
+        free_posts = await _run(sheets.free_slots_by_post, new_city, new_d, True,
+                                b.data.get("diameter", ""))  # свежее
+        if new_time not in free_posts:
+            ud["rs_free"], ud["rs_free_posts"] = list(free_posts), free_posts
             await update.message.reply_text("😳 Слот уже заняли. Выберите другое время:",
-                                            reply_markup=kb.times_kb(free))
-            ud["rs_free"] = free
+                                            reply_markup=kb.times_kb(ud["rs_free"]))
             return RS_TIME
+        new_post = free_posts[new_time]
         await _run(sheets.move_booking, b.city, b.date, b.time,
-                   new_city, new_d, new_time, b.data)
+                   new_post, new_d, new_time, b.data)
     except Exception as e:  # noqa: BLE001
         log.exception("Ошибка переноса")
         await update.message.reply_text(f"⚠️ Не удалось перенести: {e}")
@@ -720,7 +729,7 @@ async def rs_time(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     await update.message.reply_text(
         "✅ <b>Перенесено!</b>\n"
         f"Было: {_booking_label(b)}\n"
-        f"Стало: {cal.date_button(new_d)} {new_time} — {new_city.title}",
+        f"Стало: {cal.date_button(new_d)} {new_time} — {new_post.full_title}",
         parse_mode="HTML")
     return await _show_menu(update)
 

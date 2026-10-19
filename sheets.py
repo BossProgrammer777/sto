@@ -10,6 +10,9 @@
     («01.09.2026») — в объединённой ячейке рядом. Матчим по «дд.мм.гггг».
   • Блок даты ≈ 26 строк: дата → шапка → 2 строки-заглушки → 22 слота
     9:00–19:30 → следующая дата. Время без ведущего нуля («9:00»).
+  • Киев Деревообробна — 2 поста: ПОСТ №1 (A–E) и ПОСТ №2 справа от него
+    (Номер заказа | Диаметр | МОП Запись | ПРОЗВОН). Своей колонки «Время» у
+    ПОСТ №2 может не быть — строки общие с ПОСТ №1, время берём оттуда.
 
 Определение свободного слота (по решению заказчика):
   СВОБОДНО = ячейка «Номер заказа» БЕЛАЯ и ПУСТАЯ.
@@ -86,6 +89,22 @@ def _norm_time(s: str) -> str | None:
     if not m:
         return None
     return f"{int(m.group(1))}:{m.group(2)}"
+
+
+def _has_label(text: str, tokens: tuple[str, ...]) -> bool:
+    """Есть ли в заголовке одно из слов (сравниваем и без пробелов/«№»)."""
+    t = text.lower()
+    compact = re.sub(r"[\s№#]", "", t)
+    return any(tok in t or tok in compact for tok in tokens)
+
+
+def _time_key(t: str) -> tuple[int, int]:
+    h, m = t.split(":")
+    return int(h), int(m)
+
+
+def _grid_free(x: dict | None) -> bool:
+    return bool(x) and x["c"] == "W" and not x["b"]
 
 
 def _is_white(color: dict | None) -> bool:
@@ -248,17 +267,31 @@ class SheetsClient:
                 if key in found or not tokens:
                     continue
                 hits = [i for i, t in enumerate(titles)
-                        if i not in taken and any(tok in t for tok in tokens)]
+                        if i not in taken and _has_label(t, tokens)]
                 if len(hits) == 1:
                     found[key] = hits[0]
                     taken.add(hits[0])
-        if len(starts) == len(keys):  # запасной вариант — по порядку блоков
-            for i, key in enumerate(keys):
+        # запасной вариант — по порядку блоков (у ПОСТ №2 своей «Время» может не быть)
+        main = [k for k in keys if not config.CITIES[k].parent]
+        order = keys if len(starts) == len(keys) else main if len(starts) == len(main) else []
+        if order:
+            for i, key in enumerate(order):
                 if key not in found and i not in taken:
                     found[key] = i
                     taken.add(i)
 
         mapping = {key: starts[i] for key, i in found.items()}
+        # Доп. пост (ПОСТ №2 Деревообробной): своей колонки «Время» может не быть —
+        # тогда ищем по заголовку. И проверяем, что «Номер заказа» там, где ждём.
+        for key, city in config.CITIES.items():
+            if not city.parent:
+                continue
+            col = mapping.pop(key, None)
+            off = config.column_index(city, "Номер заказа")
+            if col is None or md.val(header_row, col + off).strip().lower() != "номер заказа":
+                col = self._titled_block(md, header_row, city, set(mapping.values()))
+            if col is not None:
+                mapping[key] = col
         sig = f"{md.title}:{sorted(mapping.items())}"
         if sig not in _logged_maps:
             _logged_maps.add(sig)
@@ -266,12 +299,42 @@ class SheetsClient:
                      {k: gspread.utils.rowcol_to_a1(1, c + 1)[:-1] for k, c in mapping.items()})
         return header_row, mapping
 
+    @staticmethod
+    def _titled_block(md: MonthData, header_row: int, city: config.City,
+                      used: set[int]) -> int | None:
+        """Начало блока доп. поста, у которого нет своей колонки «Время»:
+        ищем его заголовок (City.labels) и под ним колонку «Номер заказа».
+        Начало блока — колонка левее (там у обычных блоков «Время»)."""
+        hits = [c for r in range(header_row) for c, v in enumerate(md.values[r])
+                if _has_label(v, city.labels)]
+        if not hits or max(hits) - min(hits) > 8:
+            return None
+        c0 = min(hits)
+        for r in range(header_row, min(header_row + 60, md.nrows)):
+            for c in range(c0, c0 + 8):
+                if md.val(r, c).strip().lower() == "номер заказа":
+                    start = c - config.column_index(city, "Номер заказа")
+                    return None if start in used else start
+        return None
+
     def _block_start_col(self, md: MonthData, city: config.City) -> tuple[int, int]:
         """(start_col, header_row) блока города."""
         header_row, mapping = self._block_map(md)
         if city.key not in mapping:
-            raise SheetError(f"Не найден блок «{city.title}» на листе {md.title}")
+            raise SheetError(f"Не найден блок «{city.full_title}» на листе {md.title}")
         return mapping[city.key], header_row
+
+    def _axes(self, md: MonthData, city: config.City, start_col: int) -> tuple[int, int, int]:
+        """(колонка «Время», начало и ширина блока для поиска дат). У доп. поста
+        без своей колонки «Время» берём их у основного поста (строки общие)."""
+        time_col = start_col + config.column_index(city, "Время")
+        width = len(config.LAYOUTS[city.layout]["columns"])
+        if city.parent and not any(_norm_time(md.val(r, time_col)) for r in range(md.nrows)):
+            parent = config.CITIES[city.parent]
+            ps, _ = self._block_start_col(md, parent)
+            return (ps + config.column_index(parent, "Время"), ps,
+                    len(config.LAYOUTS[parent.layout]["columns"]))
+        return time_col, start_col, width
 
     def _date_section(self, md: MonthData, start_col: int, width: int,
                       d: date) -> tuple[int, int]:
@@ -292,10 +355,9 @@ class SheetsClient:
     def _section_slots(self, md: MonthData, city: config.City,
                        d: date) -> tuple[int, list[tuple[int, str]]]:
         """(start_col, [(строка, время)...]) — слоты времени секции даты по порядку."""
-        width = len(config.LAYOUTS[city.layout]["columns"])
         start_col, _ = self._block_start_col(md, city)
-        sec_start, sec_end = self._date_section(md, start_col, width, d)
-        time_col = start_col + config.column_index(city, "Время")
+        time_col, date_col, width = self._axes(md, city, start_col)
+        sec_start, sec_end = self._date_section(md, date_col, width, d)
         slots: list[tuple[int, str]] = []
         for r in range(sec_start, sec_end):
             t = _norm_time(md.val(r, time_col))
@@ -311,7 +373,7 @@ class SheetsClient:
         for r, t in slots:
             if t == want:
                 return r, start_col
-        raise SheetError(f"Слот {time} не найден на {d.isoformat()} ({city.title})")
+        raise SheetError(f"Слот {time} не найден на {d.isoformat()} ({city.full_title})")
 
     # ───────────────────────── Свободные слоты ─────────────────────────
 
@@ -328,17 +390,15 @@ class SheetsClient:
             except Exception as e:  # noqa: BLE001
                 log.info("prefetch %s не удался: %s", cal.month_sheet_name(d), e)
 
-    @_network_retry
-    def read_free_slots(self, city: config.City, d: date, force: bool = False,
-                        diameter: str = "") -> list[str]:
+    def _free_in_block(self, md: MonthData, city: config.City, d: date,
+                       diameter: str) -> list[str]:
         """
-        Свободные слоты на город+дату.
+        Свободные слоты одного блока (поста) на дату.
         Обычно: ячейка «Номер заказа» белая и пустая.
         Большие шины (R20+) в Киеве занимают 2 подряд слота: слот подходит,
         если он пуст (цвет неважен) И следующий слот пуст ИЛИ это последний
         свободный слот дня. Свободность считается по пустоте «Номер заказа».
         """
-        md = self._load_month(d, force=force)
         start_col, slots = self._section_slots(md, city, d)
         order_col = start_col + config.column_index(city, "Номер заказа")
 
@@ -362,19 +422,61 @@ class SheetsClient:
                     free.append(t)
             else:
                 free.append(t)
+        return free
 
+    @_network_retry
+    def free_slots_by_post(self, city: config.City, d: date, force: bool = False,
+                           diameter: str = "") -> dict[str, config.City]:
+        """
+        Свободное время на город+дату → пост, куда записывать (по порядку времени).
+        Если у филиала несколько постов, на каждое время берём предпочтительный
+        для диаметра пост (config.posts_for), а если там занято — другой.
+        """
+        md = self._load_month(d, force=force)
+        found: dict[str, config.City] = {}
+        errors: list[SheetError] = []
+        for post in config.posts_for(city, diameter):
+            try:
+                times = self._free_in_block(md, post, d, diameter)
+            except SheetError as e:
+                # доп. пост может отсутствовать на старом листе — считаем по остальным
+                log.info("%s: %s", post.full_title, e)
+                errors.append(e)
+                continue
+            for t in times:
+                found.setdefault(t, post)
+        if len(errors) == len(config.posts_of(city)):
+            raise errors[0]
+
+        free = sorted(found, key=_time_key)
         # На сегодня не показывать прошедшее время
         if d == cal.today():
             now = cal.now()
-            free = [t for t in free
-                    if (int(t.split(":")[0]), int(t.split(":")[1])) >= (now.hour, now.minute)]
-        return free
+            free = [t for t in free if _time_key(t) >= (now.hour, now.minute)]
+        return {t: found[t] for t in free}
+
+    def read_free_slots(self, city: config.City, d: date, force: bool = False,
+                        diameter: str = "") -> list[str]:
+        """Свободное время на город+дату (без разбивки по постам)."""
+        return list(self.free_slots_by_post(city, d, force, diameter))
 
     # ───────────────────────── Расписание для сайта (только чтение) ─────────────────────────
 
     def day_grid(self, city: config.City, d: date) -> list[dict]:
-        """Сетка дня без персональных данных: [{t, c: W|O|R, b: занято?}]."""
+        """Сетка дня без персональных данных: [{t, c: W|O|R, b: занято?}].
+        У филиала с несколькими постами слот свободен, если свободен хоть на одном."""
         md = self._load_month(d)
+        grid = self._block_grid(md, city, d)
+        for post in config.posts_of(city)[1:]:
+            try:
+                other = {x["t"]: x for x in self._block_grid(md, post, d)}
+            except SheetError:
+                continue
+            grid = [other[x["t"]] if not _grid_free(x) and _grid_free(other.get(x["t"])) else x
+                    for x in grid]
+        return grid
+
+    def _block_grid(self, md: MonthData, city: config.City, d: date) -> list[dict]:
         start_col, slots = self._section_slots(md, city, d)
         order_col = start_col + config.column_index(city, "Номер заказа")
         out = []
@@ -405,7 +507,7 @@ class SheetsClient:
         want = _norm_time(time)
         idx = next((i for i, (r, t) in enumerate(slots) if t == want), None)
         if idx is None:
-            raise SheetError(f"Слот {time} не найден на {d.isoformat()} ({city.title})")
+            raise SheetError(f"Слот {time} не найден на {d.isoformat()} ({city.full_title})")
 
         columns = config.LAYOUTS[city.layout]["columns"]
         order_col = start_col + columns.index("Номер заказа")
@@ -489,17 +591,16 @@ class SheetsClient:
             for city in config.CITIES.values():
                 try:
                     start_col, _ = self._block_start_col(md, city)
+                    time_col, date_col, date_width = self._axes(md, city, start_col)
                 except SheetError:
                     continue
                 cols = config.LAYOUTS[city.layout]["columns"]
-                width = len(cols)
                 order_col = start_col + cols.index("Номер заказа")
-                time_col = start_col + cols.index("Время")
                 phone_col = start_col + cols.index("Номер тел.") if "Номер тел." in cols else None
                 diam_col = start_col + cols.index("Диаметр") if "Диаметр" in cols else None
                 car_col = start_col + cols.index("ТИП Авто") if "ТИП Авто" in cols else None
                 mop_col = start_col + cols.index("МОП Запись") if "МОП Запись" in cols else None
-                date_rows = self._block_date_rows(md, start_col, width)
+                date_rows = self._block_date_rows(md, date_col, date_width)
 
                 for r in range(md.nrows):
                     order = md.val(r, order_col)
@@ -534,7 +635,7 @@ class SheetsClient:
         want = _norm_time(time)
         idx = next((i for i, (r, t) in enumerate(slots) if t == want), None)
         if idx is None:
-            raise SheetError(f"Слот {time} не найден на {d.isoformat()} ({city.title})")
+            raise SheetError(f"Слот {time} не найден на {d.isoformat()} ({city.full_title})")
 
         row0 = slots[idx][0]
         order_val = md.val(row0, order_col).strip()
@@ -594,10 +695,9 @@ class SheetsClient:
             return cached[1]
         try:
             md = self._load_month(cal.today())
-            width = len(config.LAYOUTS[city.layout]["columns"])
             start_col, _ = self._block_start_col(md, city)
-            sec_start, sec_end = self._date_section(md, start_col, width, cal.today())
-            time_col = start_col + config.column_index(city, "Время")
+            time_col, date_col, width = self._axes(md, city, start_col)
+            sec_start, sec_end = self._date_section(md, date_col, width, cal.today())
             col = start_col + config.column_index(city, column_name)
 
             data_row = next((r for r in range(sec_start, sec_end)
