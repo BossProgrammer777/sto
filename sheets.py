@@ -15,7 +15,9 @@
     ПОСТ №2 может не быть — строки общие с ПОСТ №1, время берём оттуда.
 
 Определение свободного слота (по решению заказчика):
-  СВОБОДНО = ячейка «Номер заказа» БЕЛАЯ и ПУСТАЯ.
+  СВОБОДНО = ячейка «Номер заказа» БЕЛАЯ, а поля записи (телефон, заказ,
+  диаметр, тип авто, МОП) ПУСТЫЕ — в Харькове/Днепре/Львове часто
+  вписывают только телефон, такой слот тоже занят.
   Красный (занято/закрыто) и оранжевый (недоступно) — не свободны.
 
 Запись (подход А): бот пишет данные прямо в ячейки нужного слота простыни.
@@ -397,13 +399,13 @@ class SheetsClient:
         Обычно: ячейка «Номер заказа» белая и пустая.
         Большие шины (R20+) в Киеве занимают 2 подряд слота: слот подходит,
         если он пуст (цвет неважен) И следующий слот пуст ИЛИ это последний
-        свободный слот дня. Свободность считается по пустоте «Номер заказа».
+        свободный слот дня. Пустой = не заполнено ни одно поле записи.
         """
         start_col, slots = self._section_slots(md, city, d)
         order_col = start_col + config.column_index(city, "Номер заказа")
 
         big = config.needs_two_slots(city, diameter)
-        empties = [not md.val(r, order_col).strip() for r, _ in slots]   # пусто?
+        empties = [not self._row_busy(md, city, start_col, r) for r, _ in slots]
         whites = [_is_white(md.color(r, order_col)) for r, _ in slots]
 
         free: list[str] = []
@@ -483,7 +485,7 @@ class SheetsClient:
         for r, t in slots:
             color = md.color(r, order_col)
             c = "W" if _is_white(color) else ("R" if _is_red(color) else "O")
-            out.append({"t": t, "c": c, "b": bool(md.val(r, order_col).strip())})
+            out.append({"t": t, "c": c, "b": self._row_busy(md, city, start_col, r)})
         return out
 
     def days_for_city(self, city: config.City) -> dict[str, list[dict]]:
@@ -510,12 +512,11 @@ class SheetsClient:
             raise SheetError(f"Слот {time} не найден на {d.isoformat()} ({city.full_title})")
 
         columns = config.LAYOUTS[city.layout]["columns"]
-        order_col = start_col + columns.index("Номер заказа")
         target_rows = [slots[idx][0]]
         if config.needs_two_slots(city, data.get("diameter", "")) and idx + 1 < len(slots):
             nr = slots[idx + 1][0]
             # второй слот занимаем, если он просто пустой (цвет любой)
-            if not md.val(nr, order_col).strip():
+            if not self._row_busy(md, city, start_col, nr):
                 target_rows.append(nr)
 
         value_map = {
@@ -570,6 +571,12 @@ class SheetsClient:
         """Колонки, которые бот заполняет/чистит (по порядку)."""
         return [c for c in ["Номер тел.", "Номер заказа", "Диаметр", "ТИП Авто", "МОП Запись"]
                 if c in cols]
+
+    def _row_busy(self, md: MonthData, city: config.City, start_col: int, r: int) -> bool:
+        """Слот занят, если заполнено хоть одно поле записи (телефон, заказ,
+        диаметр, тип авто, МОП), а не только «Номер заказа»."""
+        cols = config.LAYOUTS[city.layout]["columns"]
+        return any(md.val(r, start_col + cols.index(c)).strip() for c in self._bot_cols(cols))
 
     @_network_retry
     def search_bookings(self, query: str) -> list[Booking]:
