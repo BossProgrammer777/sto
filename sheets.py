@@ -15,9 +15,9 @@
     ПОСТ №2 может не быть — строки общие с ПОСТ №1, время берём оттуда.
 
 Определение свободного слота (по решению заказчика):
-  СВОБОДНО = ячейка «Номер заказа» БЕЛАЯ, а поля записи (телефон, заказ,
-  диаметр, тип авто, МОП) ПУСТЫЕ — в Харькове/Днепре/Львове часто
-  вписывают только телефон, такой слот тоже занят.
+  СВОБОДНО = ячейка «Номер заказа» БЕЛАЯ и ВСЯ строка блока пустая (все
+  колонки, кроме «Время»). Не считаются: формулы и ошибки вида #N/A, а также
+  скрытые колонки, которые бот не заполняет.
   Красный (занято/закрыто) и оранжевый (недоступно) — не свободны.
 
 Запись (подход А): бот пишет данные прямо в ячейки нужного слота простыни.
@@ -30,7 +30,7 @@ import json
 import logging
 import re
 import time as _time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 
 import gspread
@@ -49,6 +49,7 @@ _DATE_IN_CELL_RE = re.compile(r"\b(\d{2}\.\d{2}\.\d{4})\b")
 _DOW_TOKENS = {"пн", "вт", "ср", "чт", "пт", "сб", "вс", "нд"}
 _SERIAL_RE = re.compile(r"(\d{2})[,.]?(\d{3})(?:[.,]0+)?")
 _SERIAL_EPOCH = date(1899, 12, 30)  # нулевой день дат Google Sheets
+_ERROR_RE = re.compile(r"^#(N/A|REF!|VALUE!|DIV/0!|NAME\?|NUM!|NULL!|ERROR!)")
 _logged_maps: set[str] = set()
 
 MONTH_CACHE_TTL = 45      # сек — кеш прочитанного месячного листа (значения+цвета)
@@ -135,6 +136,8 @@ class MonthData:
     title: str
     values: list[list[str]]
     colors: list[list[dict | None]]
+    hidden: set[int] = field(default_factory=set)                # скрытые колонки
+    formulas: set[tuple[int, int]] = field(default_factory=set)  # ячейки с формулой
 
     def val(self, r: int, c: int) -> str:
         if 0 <= r < len(self.values) and 0 <= c < len(self.values[r]):
@@ -209,8 +212,9 @@ class SheetsClient:
             meta = self.ss.fetch_sheet_metadata({
                 "includeGridData": True,
                 "ranges": [name],
-                "fields": ("sheets(properties(title),data(rowData(values("
-                           "formattedValue,effectiveFormat(backgroundColor)))))"),
+                "fields": ("sheets(properties(title),data(columnMetadata(hiddenByUser),"
+                           "rowData(values(formattedValue,userEnteredValue(formulaValue),"
+                           "effectiveFormat(backgroundColor)))))"),
             })
         except gspread.exceptions.APIError as e:
             raise SheetError(f"Не удалось прочитать лист «{name}»: {e}") from e
@@ -219,20 +223,25 @@ class SheetsClient:
         if not sheets:
             raise SheetError(f"Месячный лист «{name}» не найден")
 
-        row_data = sheets[0].get("data", [{}])[0].get("rowData", [])
+        grid = sheets[0].get("data", [{}])[0]
+        hidden = {i for i, m in enumerate(grid.get("columnMetadata", []) or [])
+                  if m.get("hiddenByUser")}
         values: list[list[str]] = []
         colors: list[list[dict | None]] = []
-        for row in row_data:
+        formulas: set[tuple[int, int]] = set()
+        for r, row in enumerate(grid.get("rowData", [])):
             cells = row.get("values", []) or []
             vrow, crow = [], []
-            for cell in cells:
+            for c, cell in enumerate(cells):
                 vrow.append(cell.get("formattedValue", "") or "")
                 fmt = cell.get("effectiveFormat") or {}
                 crow.append(fmt.get("backgroundColor"))
+                if (cell.get("userEnteredValue") or {}).get("formulaValue"):
+                    formulas.add((r, c))
             values.append(vrow)
             colors.append(crow)
 
-        md = MonthData(name, values, colors)
+        md = MonthData(name, values, colors, hidden, formulas)
         self._month_cache[name] = (_time.time(), md)
         return md
 
@@ -399,7 +408,7 @@ class SheetsClient:
         Обычно: ячейка «Номер заказа» белая и пустая.
         Большие шины (R20+) в Киеве занимают 2 подряд слота: слот подходит,
         если он пуст (цвет неважен) И следующий слот пуст ИЛИ это последний
-        свободный слот дня. Пустой = не заполнено ни одно поле записи.
+        свободный слот дня. Пустой = пуста вся строка блока (см. _row_busy).
         """
         start_col, slots = self._section_slots(md, city, d)
         order_col = start_col + config.column_index(city, "Номер заказа")
@@ -572,11 +581,22 @@ class SheetsClient:
         return [c for c in ["Номер тел.", "Номер заказа", "Диаметр", "ТИП Авто", "МОП Запись"]
                 if c in cols]
 
-    def _row_busy(self, md: MonthData, city: config.City, start_col: int, r: int) -> bool:
-        """Слот занят, если заполнено хоть одно поле записи (телефон, заказ,
-        диаметр, тип авто, МОП), а не только «Номер заказа»."""
+    def _row_cols(self, md: MonthData, city: config.City, start_col: int) -> list[int]:
+        """Колонки строки записи: весь блок, кроме «Время». Скрытые колонки —
+        только если их заполняет бот (в скрытых может лежать что угодно)."""
         cols = config.LAYOUTS[city.layout]["columns"]
-        return any(md.val(r, start_col + cols.index(c)).strip() for c in self._bot_cols(cols))
+        bot = self._bot_cols(cols)
+        return [start_col + i for i, name in enumerate(cols)
+                if name != "Время" and (name in bot or start_col + i not in md.hidden)]
+
+    def _row_busy(self, md: MonthData, city: config.City, start_col: int, r: int) -> bool:
+        """Слот занят, если в строке заполнена хоть одна ячейка (кроме «Время»).
+        Формулы и ошибки вида #N/A (напр. в «Ориент. стоимость») не считаются."""
+        for c in self._row_cols(md, city, start_col):
+            v = md.val(r, c).strip()
+            if v and (r, c) not in md.formulas and not _ERROR_RE.match(v):
+                return True
+        return False
 
     @_network_retry
     def search_bookings(self, query: str) -> list[Booking]:
@@ -634,8 +654,9 @@ class SheetsClient:
 
     @_network_retry
     def cancel_booking(self, city: config.City, d: date, time: str) -> None:
-        """Освободить слот: очистить данные записи (цвет фона не трогаем, чтобы
-        не менять смысл «красное = закрыто»). Для R20+ чистим обе строки."""
+        """Освободить слот: очистить всю строку записи, кроме «Время» и формул
+        (цвет фона не трогаем, чтобы не менять смысл «красное = закрыто»).
+        Для R20+ чистим обе строки."""
         md = self._load_month(d, force=True)
         start_col, slots = self._section_slots(md, city, d)
         order_col = start_col + config.column_index(city, "Номер заказа")
@@ -651,14 +672,12 @@ class SheetsClient:
             if 0 <= j < len(slots) and order_val and md.val(slots[j][0], order_col).strip() == order_val:
                 rows.append(slots[j][0])
 
-        cols = config.LAYOUTS[city.layout]["columns"]
-        bot_cols = self._bot_cols(cols)
-        if not bot_cols:
+        # чистим всю строку (и «Прозвон», и «Стоимость»), иначе слот останется
+        # занятым; формулы не трогаем
+        ranges = [gspread.utils.rowcol_to_a1(r + 1, c + 1) for r in rows
+                  for c in self._row_cols(md, city, start_col) if (r, c) not in md.formulas]
+        if not ranges:
             return
-        first = start_col + cols.index(bot_cols[0])
-        last = start_col + cols.index(bot_cols[-1])
-        ranges = [f"{gspread.utils.rowcol_to_a1(r + 1, first + 1)}:"
-                  f"{gspread.utils.rowcol_to_a1(r + 1, last + 1)}" for r in rows]
         ws = self.ss.worksheet(md.title)
         ws.batch_clear(ranges)
         self._month_cache.clear()
