@@ -24,7 +24,8 @@ import config
 import calendar_utils as cal
 import keyboards as kb
 from sheets import SheetsClient, SheetError
-from storage import StorageClient, StoredClient, client_label, group_message, place_label, set_lines
+from storage import (StorageClient, StoredClient, client_details, client_label, group_message,
+                     place_label, set_lines)
 
 logging.basicConfig(
     format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
@@ -425,7 +426,11 @@ async def storage_ask(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
     ud["_st_hits"] = hits
     ud["_st_labels"] = [client_label(c) for c in hits]
     more = f" (показаны первые {len(hits)} из {total} — уточните фамилию или имя)" if total > len(hits) else ""
-    await update.message.reply_text(f"Найдено: {total}{more}. Выберите клиента:",
+    lines = [f"Найдено: {total}{more}."]
+    for c in hits:  # сразу показываем, какие шины лежат у каждого
+        lines += ["", f"👤 <b>{html.escape(c.name)}</b>", *(html.escape(ln) for ln in client_details(c))]
+    lines += ["", "Выберите клиента:"]
+    await update.message.reply_text("\n".join(lines), parse_mode="HTML",
                                     reply_markup=kb.storage_pick_kb(ud["_st_labels"]))
     return STORAGE_PICK
 

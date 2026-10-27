@@ -35,6 +35,19 @@ class StoredClient:
     sets: tuple[TireSet, ...]
 
 
+# Начало следующей шины внутри одной строки ячейки: «… 98H Зимняя шина …».
+_NEXT_TIRE_RE = re.compile(r"(?<=\S)[\s,;+]+(?=(?:зимн|летн|літн|всесезон)\w*\s+шин)", re.I)
+
+
+def _split_tires(cell: str) -> list[str]:
+    """Комплекты из ячейки «Шины»: каждая строка — отдельно; если в одной строке
+    подряд несколько шин («Зимняя шина … Летняя шина …») — тоже делим."""
+    out = []
+    for ln in cell.splitlines():
+        out.extend(p.strip() for p in _NEXT_TIRE_RE.split(ln) if p.strip())
+    return out
+
+
 def _norm(s: str) -> str:
     s = s.replace("#", " ").replace("ё", "е").replace("Ё", "Е").replace("’", "'").replace("ʼ", "'")
     return re.sub(r"\s+", " ", s).strip().lower()
@@ -71,7 +84,7 @@ def parse_rows(values: list[list[str]]) -> list[StoredClient]:
         name = cell(r, "name")
         if not name:
             continue
-        lines = [ln.strip() for ln in cell(r, "tires").splitlines() if ln.strip()] or [""]
+        lines = _split_tires(cell(r, "tires")) or [""]
         sets = [TireSet(ln, cell(r, "row"), cell(r, "place"), cell(r, "comment")) for ln in lines]
         by_name.setdefault(_norm(name), (name, []))[1].extend(sets)
     return [StoredClient(name, tuple(sets)) for name, sets in by_name.values()]
@@ -97,6 +110,21 @@ def client_label(c: StoredClient) -> str:
         return f"{c.name} · {len(c.sets)} компл."
     where = place_label(c.sets[0])
     return f"{c.name} · {where}" if where else c.name
+
+
+def client_details(c: StoredClient) -> list[str]:
+    """Что лежит у клиента — для показа оператору при выборе клиента."""
+    places = {place_label(s) for s in c.sets}
+    if len(places) == 1:
+        place = places.pop()
+        lines = ([f"📍 {place}"] if place else []) + [f"• {s.tires}" for s in c.sets if s.tires]
+    else:
+        lines = [f"• {s.tires or 'без описания'}" + (f" — {place_label(s)}" if place_label(s) else "")
+                 for s in c.sets]
+    comments = list(dict.fromkeys(s.comment for s in c.sets if s.comment))
+    if comments:
+        lines.append("💬 " + "; ".join(comments))
+    return lines
 
 
 def set_lines(c: StoredClient) -> list[str]:
