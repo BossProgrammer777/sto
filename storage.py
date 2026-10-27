@@ -4,8 +4,7 @@
 Ожидаемые колонки (ищутся по заголовку, порядок любой):
     ФИО | Ряд | Место | Шины | Комментарий
 Комплекты клиента: каждая строка в ячейке «Шины» — отдельный комплект; если клиент
-записан в таблице несколькими строками, его комплекты собираются вместе. Одна и та
-же шина в разных местах (напр. по 2 шт. в ряду А и Б) — это один комплект.
+записан в таблице несколькими строками, его комплекты собираются вместе.
 """
 
 from __future__ import annotations
@@ -24,8 +23,9 @@ CACHE_TTL = 120  # сек — таблица хранения перечитыв
 
 @dataclass(frozen=True)
 class TireSet:
-    tires: str                          # описание комплекта (одна строка из ячейки «Шины»)
-    spots: tuple[tuple[str, str], ...]  # где лежит: (ряд, место) — мест может быть несколько
+    tires: str     # описание комплекта (одна строка из ячейки «Шины»)
+    row: str
+    place: str
     comment: str
 
 
@@ -79,23 +79,15 @@ def parse_rows(values: list[list[str]]) -> list[StoredClient]:
         j = cols.get(key)
         return r[j].strip() if j is not None and j < len(r) else ""
 
-    by_name: dict[str, tuple[str, dict[str, dict]]] = {}
+    by_name: dict[str, tuple[str, list[TireSet]]] = {}
     for r in values[header + 1:]:
         name = cell(r, "name")
         if not name:
             continue
-        sets = by_name.setdefault(_norm(name), (name, {}))[1]
-        spot, comment = (cell(r, "row"), cell(r, "place")), cell(r, "comment")
-        for tires in _split_tires(cell(r, "tires")) or [""]:
-            # одинаковая шина в разных местах — один комплект с несколькими местами
-            st = sets.setdefault(_norm(tires), {"tires": tires, "spots": [], "comments": []})
-            if any(spot) and spot not in st["spots"]:
-                st["spots"].append(spot)
-            if comment and comment not in st["comments"]:
-                st["comments"].append(comment)
-    return [StoredClient(name, tuple(TireSet(st["tires"], tuple(st["spots"]), "; ".join(st["comments"]))
-                                     for st in sets.values()))
-            for name, sets in by_name.values()]
+        lines = _split_tires(cell(r, "tires")) or [""]
+        sets = [TireSet(ln, cell(r, "row"), cell(r, "place"), cell(r, "comment")) for ln in lines]
+        by_name.setdefault(_norm(name), (name, []))[1].extend(sets)
+    return [StoredClient(name, tuple(sets)) for name, sets in by_name.values()]
 
 
 def search(clients: list[StoredClient], query: str, limit: int = 8) -> tuple[list[StoredClient], int]:
@@ -108,10 +100,8 @@ def search(clients: list[StoredClient], query: str, limit: int = 8) -> tuple[lis
 
 
 def place_label(s: TireSet) -> str:
-    """«ряд А, место 5; ряд Б, место 5» — все места комплекта."""
-    labels = [", ".join(p for p in (f"ряд {row}" if row else "", f"место {place}" if place else "") if p)
-              for row, place in s.spots]
-    return "; ".join(lb for lb in labels if lb)
+    parts = [p for p in (f"ряд {s.row}" if s.row else "", f"место {s.place}" if s.place else "") if p]
+    return ", ".join(parts)
 
 
 def client_label(c: StoredClient) -> str:
