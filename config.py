@@ -39,8 +39,31 @@ MONTHS_AHEAD = int(_get("MONTHS_AHEAD", "1"))
 WEB_API_ENABLED = _get("WEB_API", "true").lower() in ("1", "true", "yes", "да")
 
 
+# Кто может пользоваться ботом (Telegram ID → имя). Остальным бот отвечает
+# «нет доступа» и показывает их ID — его присылают админу, чтобы добавить сюда.
+# Свой ID человек узнаёт, написав боту /chatid в личку.
+OPERATORS: dict[int, str] = {
+    6401842735: "Виталий Садурский (админ)",
+    7492065202: "Сергей Майданец",
+    7120671397: "Егор Александров",
+    7859856603: "Сергей Симоненко",
+    721843220: "Александр Симоненко",
+    7737627021: "Артем Скороход",
+    7662530066: "Вячеслав Шабатько",
+    8029297178: "Олег Ольховский",
+    5043367181: "Дмитрий Белоглазов",
+    7273727635: "Вячеслав Нестеренко",
+    8180858231: "Виталий Сюта",
+    8261905684: "Сергей Дубина",
+    7303853985: "Татьяна Кваша",
+    8311096812: "Артем Бугайченко",
+    993304667: "Вячеслав Разьва",
+    7783840143: "Денис Татара",
+}
+
+
 def _load_allowed_ids() -> set[int]:
-    """Whitelist Telegram ID операторов с доступом к боту (через запятую)."""
+    """Доп. Telegram ID из окружения (через запятую) — добавить человека без правки кода."""
     raw = _get("ALLOWED_OPERATOR_IDS", "")
     ids: set[int] = set()
     for part in raw.replace(";", ",").split(","):
@@ -50,14 +73,10 @@ def _load_allowed_ids() -> set[int]:
     return ids
 
 
-ALLOWED_OPERATOR_IDS: set[int] = _load_allowed_ids()
+ALLOWED_OPERATOR_IDS: set[int] = set(OPERATORS) | _load_allowed_ids()
 
 
 def is_allowed(telegram_id: int) -> bool:
-    # Пустой whitelist = доступ открыт всем (временный режим; впишите ID —
-    # и доступ станет ограниченным).
-    if not ALLOWED_OPERATOR_IDS:
-        return True
     return telegram_id in ALLOWED_OPERATOR_IDS
 
 

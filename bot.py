@@ -46,9 +46,9 @@ storage: StorageClient | None = None  # таблицы хранения (есл�
 
 # ───────────────────────────── Вспомогательное ─────────────────────────────
 
-def _deny_text() -> str:
+def _deny_text(user_id: int) -> str:
     return ("⛔ У вас нет доступа к боту записи.\n"
-            "Обратитесь к администратору, чтобы добавить ваш Telegram ID.")
+            f"Ваш Telegram ID: {user_id} — перешлите его администратору, чтобы вас добавили.")
 
 
 async def _run(fn, *args):
@@ -97,7 +97,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     user = update.effective_user
     if not config.is_allowed(user.id):
         log.info("Отказ в доступе: id=%s username=%s", user.id, user.username)
-        await update.message.reply_text(_deny_text())
+        await update.message.reply_text(_deny_text(user.id))
         return ConversationHandler.END
 
     context.user_data.clear()
@@ -114,7 +114,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
 async def menu_entry(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Кнопка меню вне диалога (напр. после перезапуска бота) — сразу в дело."""
     if not config.is_allowed(update.effective_user.id):
-        await update.message.reply_text(_deny_text())
+        await update.message.reply_text(_deny_text(update.effective_user.id))
         return ConversationHandler.END
     return await menu(update, context)
 
@@ -123,7 +123,7 @@ async def lost(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Сообщение вне диалога. Бот хранит шаг записи в памяти и после перезапуска
     его забывает — раньше он в этом случае молчал. Теперь говорит и даёт меню."""
     if not config.is_allowed(update.effective_user.id):
-        await update.message.reply_text(_deny_text())
+        await update.message.reply_text(_deny_text(update.effective_user.id))
         return
     context.user_data.clear()
     await update.message.reply_text(
