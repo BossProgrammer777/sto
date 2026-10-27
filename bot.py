@@ -15,6 +15,7 @@ import logging
 import re
 
 from telegram import Update, ReplyKeyboardMarkup
+from telegram.constants import ChatType
 from telegram.ext import (
     Application, CommandHandler, MessageHandler, ConversationHandler,
     ContextTypes, filters,
@@ -108,6 +109,26 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         parse_mode="HTML", reply_markup=kb.menu_kb(),
     )
     return MENU
+
+
+async def menu_entry(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Кнопка меню вне диалога (напр. после перезапуска бота) — сразу в дело."""
+    if not config.is_allowed(update.effective_user.id):
+        await update.message.reply_text(_deny_text())
+        return ConversationHandler.END
+    return await menu(update, context)
+
+
+async def lost(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Сообщение вне диалога. Бот хранит шаг записи в памяти и после перезапуска
+    его забывает — раньше он в этом случае молчал. Теперь говорит и даёт меню."""
+    if not config.is_allowed(update.effective_user.id):
+        await update.message.reply_text(_deny_text())
+        return
+    context.user_data.clear()
+    await update.message.reply_text(
+        "⚠️ Бот перезапускался или запись уже завершена — незаконченный шаг сброшен.\n"
+        "Что делаем?", reply_markup=kb.menu_kb())
 
 
 async def _show_menu(update: Update) -> int:
@@ -741,6 +762,15 @@ async def rs_time(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
 
 async def on_error(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
     log.exception("Ошибка в обработчике", exc_info=context.error)
+    # Не молчим: в личке говорим оператору, что делать дальше.
+    if (isinstance(update, Update) and update.effective_message and update.effective_chat
+            and update.effective_chat.type == ChatType.PRIVATE):
+        try:
+            await update.effective_message.reply_text(
+                "⚠️ Что-то пошло не так (возможно, Google-таблица не ответила).\n"
+                "Попробуйте ещё раз или начните заново: /start")
+        except Exception:  # noqa: BLE001
+            log.exception("Не удалось сообщить оператору об ошибке")
 
 
 async def _post_init(app: Application) -> None:
@@ -767,7 +797,12 @@ def build_app() -> Application:
     # обработчиком в каждом стейте (иначе общий текстовый её перехватит).
     cancel_h = MessageHandler(filters.Regex(rf"^{re.escape(kb.BTN_CANCEL)}$"), cancel)
     conv = ConversationHandler(
-        entry_points=[CommandHandler("start", start)],
+        entry_points=[
+            CommandHandler("start", start),
+            # кнопки меню работают и вне диалога (после перезапуска бота)
+            MessageHandler(filters.ChatType.PRIVATE & filters.Regex(
+                rf"^({re.escape(kb.BTN_NEW)}|{re.escape(kb.BTN_FIND)})$"), menu_entry),
+        ],
         states={
             MENU: [cancel_h, MessageHandler(filters.TEXT & ~filters.COMMAND, menu)],
             SELECT_CITY: [cancel_h, MessageHandler(filters.TEXT & ~filters.COMMAND, select_city)],
@@ -795,6 +830,9 @@ def build_app() -> Application:
     )
     app.add_handler(conv)
     app.add_handler(CommandHandler("chatid", chat_id_cmd))
+    # Текст в личке вне диалога (бот перезапускался и забыл шаг) — не молчим.
+    # Стоит после conv: во время диалога сообщения забирает он. В группах молчим.
+    app.add_handler(MessageHandler(filters.ChatType.PRIVATE & filters.TEXT & ~filters.COMMAND, lost))
     app.add_error_handler(on_error)
     return app
 

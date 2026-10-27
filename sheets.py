@@ -34,8 +34,10 @@ from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 
 import gspread
+import requests
 from google.oauth2.service_account import Credentials
-from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
+from tenacity import (retry, retry_if_exception_type, stop_after_attempt, stop_after_delay,
+                      wait_exponential)
 
 import config
 import calendar_utils as cal
@@ -55,6 +57,9 @@ _logged_maps: set[str] = set()
 MONTH_CACHE_TTL = 45      # сек — кеш прочитанного месячного листа (значения+цвета)
 VAL_CACHE_TTL = 6 * 3600  # сек — кеш значений выпадающих списков (меняются редко)
 TITLES_CACHE_TTL = 300    # сек — кеш списка листов (чтобы замечать новый месяц)
+# сек — сколько ждать ответа Google на один запрос. Без лимита зависший запрос
+# мог «подвесить» бота: пока он ждёт, остальные сообщения не обрабатываются.
+GOOGLE_TIMEOUT = 20
 
 
 def _row_date(md: "MonthData", r: int, start_col: int, width: int) -> str | None:
@@ -81,9 +86,10 @@ class SheetError(Exception):
 def _network_retry(fn):
     return retry(
         reraise=True,
-        stop=stop_after_attempt(5),
+        stop=stop_after_attempt(5) | stop_after_delay(60),  # не дольше минуты на повторы
         wait=wait_exponential(multiplier=2, min=2, max=16),
-        retry=retry_if_exception_type((gspread.exceptions.APIError, ConnectionError, TimeoutError)),
+        retry=retry_if_exception_type((gspread.exceptions.APIError, ConnectionError, TimeoutError,
+                                       requests.exceptions.RequestException)),
     )(fn)
 
 
@@ -169,6 +175,7 @@ class SheetsClient:
         info = json.loads(config.GOOGLE_CREDENTIALS_JSON)
         creds = Credentials.from_service_account_info(info, scopes=SCOPES)
         self.gc = gspread.authorize(creds)
+        self.gc.set_timeout(GOOGLE_TIMEOUT)  # действует и на таблицы хранения (тот же клиент)
         self.ss = self.gc.open_by_key(config.SPREADSHEET_ID)
         self._month_cache: dict[str, tuple[float, MonthData]] = {}
         self._val_cache: dict[str, tuple[float, list[str]]] = {}
@@ -218,6 +225,9 @@ class SheetsClient:
             })
         except gspread.exceptions.APIError as e:
             raise SheetError(f"Не удалось прочитать лист «{name}»: {e}") from e
+        except requests.exceptions.RequestException as e:
+            raise SheetError(f"Google-таблица не ответила вовремя (лист «{name}»). "
+                             "Попробуйте ещё раз.") from e
 
         sheets = meta.get("sheets", [])
         if not sheets:
