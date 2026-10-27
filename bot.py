@@ -500,11 +500,9 @@ async def storage_sets(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
         return STORAGE_PICK
     if text == kb.BTN_NO_STORAGE:
         return await _storage_done(update, context, None)
-    if text == kb.BTN_ALL_SETS:
-        return await _storage_done(update, context, c)
     if text == kb.BTN_SETS_DONE:
         if not sel:
-            return await _ask_sets(update, context, "Отметьте хотя бы один комплект (или «📦 Все комплекты»).")
+            return await _ask_sets(update, context, "Отметьте хотя бы один комплект.")
         return await _storage_done(update, context, StoredClient(c.name, tuple(c.sets[i] for i in sorted(sel))))
     m = re.match(r"^(?:✅|⬜)\s*(\d+)\.", text)
     if m and 0 < int(m.group(1)) <= len(c.sets):
