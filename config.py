@@ -9,6 +9,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import re
 from dataclasses import dataclass
@@ -276,13 +277,30 @@ TIME_FORMAT_LEADING_ZERO = False
 # Переменные окружения (KEY — ключ поста в верхнем регистре, напр. KYIV):
 #   STORAGE_<KEY>_SHEET — ID или ссылка на Google-таблицу хранения
 #   STORAGE_<KEY>_TAB   — имя листа (необязательно, по умолчанию первый)
-#   STORAGE_<KEY>_CHAT  — ID группы филиала (узнать: команда /chatid в группе)
+#   STORAGE_<KEY>_CHAT  — ID группы филиала (узнать: команда /chatid в группе).
+#                         Если в группе темы — «ID_группы_ID_темы», напр.
+#                         -1002505574067_3: бот пишет прямо в эту тему.
 
 @dataclass(frozen=True)
 class StorageCfg:
     sheet_id: str
     tab: str
     chat_id: int | None
+    topic: int | None = None  # тема в группе-форуме (message_thread_id)
+
+
+def _parse_chat(raw: str) -> tuple[int | None, int | None]:
+    """«-1002505574067» или «-1002505574067_3» (группа + тема) → (chat_id, topic)."""
+    m = re.fullmatch(r"(-?\d+)(?:\s*[_/:]\s*(\d+))?", raw.strip())
+    if not m:  # опечатка не должна ронять бота — просто не пишем в группу
+        logging.getLogger(__name__).error(
+            "Не понял ID группы «%s» (пример: -1002505574067 или -1002505574067_3) — "
+            "сообщения в группу отправляться не будут", raw)
+        return None, None
+    chat = int(m.group(1))
+    if chat > 0 and m.group(1).startswith("100") and len(m.group(1)) >= 13:
+        chat = -chat  # у групп ID всегда с минусом — забытый минус добавляем сами
+    return chat, int(m.group(2)) if m.group(2) else None
 
 
 def _load_storage() -> dict[str, StorageCfg]:
@@ -294,8 +312,9 @@ def _load_storage() -> dict[str, StorageCfg]:
             continue
         m = re.search(r"/d/([A-Za-z0-9_-]+)", sheet)  # можно вставить полную ссылку
         chat = _get(prefix + "CHAT", "").strip()
+        chat_id, topic = _parse_chat(chat) if chat else (None, None)
         out[key] = StorageCfg(m.group(1) if m else sheet, _get(prefix + "TAB", "").strip(),
-                              int(chat) if chat else None)
+                              chat_id, topic)
     return out
 
 

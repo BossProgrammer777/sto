@@ -521,7 +521,7 @@ async def _notify_group(context: ContextTypes.DEFAULT_TYPE, city: config.City, u
     text = group_message(st, city=ud.get("post") or city, d=ud["date"], time_str=ud["time"],
                          data=ud["data"])
     try:
-        await context.bot.send_message(cfg.chat_id, text)
+        await context.bot.send_message(cfg.chat_id, text, message_thread_id=cfg.topic)
         return "\n\n📨 Отправлено в группу филиала."
     except Exception as e:  # noqa: BLE001
         log.exception("Не удалось отправить в группу %s", cfg.chat_id)
@@ -529,10 +529,15 @@ async def _notify_group(context: ContextTypes.DEFAULT_TYPE, city: config.City, u
 
 
 async def chat_id_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """/chatid — показать ID текущего чата (чтобы подключить группу филиала)."""
-    chat = update.effective_chat
+    """/chatid — показать ID текущего чата (чтобы подключить группу филиала).
+    В теме группы-форума — ещё ID темы и готовое значение для настройки."""
+    chat, msg = update.effective_chat, update.message
     title = f"\n«{chat.title}»" if chat.title else ""
-    await update.message.reply_text(f"ID этого чата: {chat.id}{title}")
+    text = f"ID этого чата: {chat.id}{title}"
+    if msg.is_topic_message and msg.message_thread_id:
+        text += (f"\nID темы: {msg.message_thread_id}"
+                 f"\nДля настройки (писать в эту тему): {chat.id}_{msg.message_thread_id}")
+    await msg.reply_text(text)
 
 
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
