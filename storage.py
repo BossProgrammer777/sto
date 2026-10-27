@@ -35,15 +35,9 @@ class StoredClient:
     sets: tuple[TireSet, ...]
 
 
-# Русское и украинское написание сводим к одному, чтобы «Плотниченко» находил
-# «Плотніченко», а «Якубовский» — «Якубовський» (латинская i — тоже «и»).
-_FOLD = str.maketrans({"ё": "е", "э": "е", "є": "е", "і": "и", "ї": "и", "ы": "и", "i": "и",
-                       "ґ": "г", "ь": "", "ъ": "", "'": "", "’": "", "ʼ": "", "`": ""})
-
-
 def _norm(s: str) -> str:
-    s = s.replace("#", " ").lower().translate(_FOLD)
-    return re.sub(r"\s+", " ", s).strip()
+    s = s.replace("#", " ").replace("ё", "е").replace("Ё", "Е").replace("’", "'").replace("ʼ", "'")
+    return re.sub(r"\s+", " ", s).strip().lower()
 
 
 def parse_rows(values: list[list[str]]) -> list[StoredClient]:
