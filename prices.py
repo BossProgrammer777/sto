@@ -37,13 +37,18 @@ PRICES: dict[str, PriceList] = {
              (21, 22, 2200)),
         suv=((15, 16, 1500), (17, 18, 1700), (19, 20, 2100), (21, 22, 2400)),
         low_profile=(250, "комплект"), run_flat=300, bus_extra=(150, "комплект")),
+    "lviv": PriceList(
+        car=((12, 14, 1000), (15, 16, 1180), (17, 18, 1320), (19, 20, 1560), (21, 22, 1900)),
+        suv=((15, 16, 1220), (17, 18, 1680), (19, 20, 1800), (21, 22, 2100)),
+        low_profile=(75, "шину"), run_flat=200, bus_extra=(200, "комплект")),
 }
 
-# Пост → прайс. Львова пока нет — для него цена не показывается.
+# Пост → прайс.
 PRICE_OF: dict[str, str] = {
     "kyiv": "kyiv", "kyiv_p2": "kyiv", "kyiv_terekhina": "kyiv", "sofiyivska": "kyiv",
     "kharkiv": "kharkiv", "kharkiv_maidan": "kharkiv",
     "dnipro": "dnipro",
+    "lviv": "lviv",
 }
 
 
