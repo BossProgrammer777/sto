@@ -24,6 +24,7 @@ from telegram.ext import (
 import config
 import calendar_utils as cal
 import keyboards as kb
+from prices import price_lines
 from sheets import SheetsClient, SheetError
 from storage import (StorageClient, StoredClient, client_details, client_label, group_message,
                      place_label, set_lines)
@@ -88,6 +89,10 @@ def _summary_text(ud: dict) -> str:
     if st:
         lines.append(f"📦 Хранение: <b>{html.escape(st.name)}</b>")
         lines.extend(f"<i>{html.escape(ln)}</i>" for ln in set_lines(st))
+    price = price_lines(post, d.get("diameter", ""), d.get("car_type", ""))
+    if price:
+        lines.append("")
+        lines.extend(html.escape(ln) for ln in price)
     return "\n".join(lines)
 
 
