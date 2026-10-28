@@ -476,6 +476,18 @@ class SheetsClient:
             free = [t for t in free if _time_key(t) >= (now.hour, now.minute)]
         return {t: found[t] for t in free}
 
+    def dates_with_free(self, city: config.City, dates: list[date], diameter: str = "") -> list[date]:
+        """Даты, на которые есть свободное время для этого диаметра (подсказка
+        «выберите другую дату»). Месячные листы берутся из кеша — это быстро."""
+        out = []
+        for d in dates:
+            try:
+                if self.free_slots_by_post(city, d, False, diameter):
+                    out.append(d)
+            except SheetError:
+                continue  # даты нет на листе — пропускаем
+        return out
+
     def read_free_slots(self, city: config.City, d: date, force: bool = False,
                         diameter: str = "") -> list[str]:
         """Свободное время на город+дату (без разбивки по постам)."""

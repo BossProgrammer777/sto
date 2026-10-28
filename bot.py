@@ -158,6 +158,7 @@ async def select_city(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
         return SELECT_CITY
 
     context.user_data["city"] = city
+    context.user_data["redate"] = False
     dates = await _run(sheets.available_dates)
     context.user_data["dates"] = dates
     await update.message.reply_text(
@@ -169,6 +170,18 @@ async def select_city(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
 
 async def select_date(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     text = update.message.text.strip()
+    ud = context.user_data
+    if ud.get("redate"):  # на прошлую дату мест не было — диаметр уже выбран
+        if text in (kb.BTN_OTHER_DIAM, kb.BTN_BACK):
+            return await _ask_diameter(update, context)
+        d = cal.parse_date_button(text, ud["dates"])
+        if d is None:
+            await update.message.reply_text("🤔 Выберите дату кнопкой.",
+                                            reply_markup=kb.redate_kb(ud["redate_dates"]))
+            return SELECT_DATE
+        ud["date"] = d
+        return await _show_free_times(update, context)  # сразу время, без диаметра
+
     if text == kb.BTN_BACK:
         await update.message.reply_text("🏙 Выберите город:", reply_markup=kb.cities_kb())
         return SELECT_CITY
@@ -185,6 +198,7 @@ async def select_date(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
 
 async def _ask_diameter(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Спросить диаметр ДО времени (от него зависит число занимаемых слотов)."""
+    context.user_data["redate"] = False
     city: config.City = context.user_data["city"]
     values = await _run(sheets.read_validation_values, city, "Диаметр", "diameter")
     context.user_data["_diam_choices"] = values
@@ -207,12 +221,8 @@ async def _show_free_times(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         await update.message.reply_text(f"⚠️ Не удалось прочитать расписание: {e}")
         return await _ask_diameter(update, context)
     if not free_posts:
-        note = "\n(для больших шин R20+ нужны 2 свободных слота подряд)" \
-            if config.needs_two_slots(city, diameter) else ""
-        await update.message.reply_text(
-            f"😔 Свободных слотов на эту дату нет.{note}\n"
-            "Выберите другой диаметр или дату:")
-        return await _ask_diameter(update, context)
+        return await _ask_other_date(update, context)
+    ud["redate"] = False
     ud["free"], ud["free_posts"] = list(free_posts), free_posts
     big = " (займёт 2 слота)" if config.needs_two_slots(city, diameter) else ""
     posts = config.posts_of(city)
@@ -222,6 +232,31 @@ async def _show_free_times(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         f"⏰ Свободное время на <b>{cal.date_label(d)}</b>{big}:{hint}",
         parse_mode="HTML", reply_markup=kb.times_kb(ud["free"]))
     return SELECT_TIME
+
+
+async def _ask_other_date(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """На выбранную дату мест нет — сразу предложить другую дату. Показываем
+    только даты, где есть время для этого диаметра; диаметр запоминаем."""
+    ud = context.user_data
+    city, diameter = ud["city"], ud["data"].get("diameter", "")
+    try:
+        dates = await _run(sheets.dates_with_free, city, ud["dates"], diameter)
+    except Exception:  # noqa: BLE001 — не смогли проверить: даём все даты
+        log.exception("Не удалось подобрать даты со свободным временем")
+        dates = list(ud["dates"])
+    dates = [x for x in dates if x != ud["date"]]
+    ud["redate"], ud["redate_dates"] = True, dates
+    what = f" для {diameter}" if diameter else ""
+    note = "\n(для больших шин R20+ нужны 2 свободных слота подряд)" \
+        if config.needs_two_slots(city, diameter) else ""
+    if dates:
+        text = (f"😔 На <b>{cal.date_label(ud['date'])}</b> свободного времени{what} нет.{note}\n"
+                f"📅 Выберите другую дату — показаны только дни, где есть время:")
+    else:
+        text = (f"😔 Свободного времени{what} нет ни на один доступный день.{note}\n"
+                f"Попробуйте «{kb.BTN_OTHER_DIAM}».")
+    await update.message.reply_text(text, parse_mode="HTML", reply_markup=kb.redate_kb(dates))
+    return SELECT_DATE
 
 
 async def select_diameter(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -370,6 +405,9 @@ async def confirm(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
                                 ud["data"].get("diameter", ""))  # свежее чтение
         if ud["time"] not in free_posts:
             ud["free"], ud["free_posts"] = list(free_posts), free_posts
+            if not free_posts:  # на эту дату мест больше нет — сразу другая дата
+                await update.message.reply_text("😳 Пока вы заполняли, слот заняли.")
+                return await _ask_other_date(update, context)
             await update.message.reply_text(
                 "😳 Пока вы заполняли, слот заняли. Выберите другое время:",
                 reply_markup=kb.times_kb(ud["free"]),

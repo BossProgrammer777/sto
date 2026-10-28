@@ -18,6 +18,7 @@ BTN_MENU = "⬅️ В меню"
 BTN_YES_DELETE = "✅ Да, удалить"
 BTN_NO_STORAGE = "⏭ Без хранения"
 BTN_SETS_DONE = "✔️ Готово"
+BTN_OTHER_DIAM = "⭕ Другой диаметр"
 
 
 def _chunk(items: list[str], per_row: int) -> list[list[str]]:
@@ -34,6 +35,13 @@ def cities_kb() -> ReplyKeyboardMarkup:
 def dates_kb(dates) -> ReplyKeyboardMarkup:
     rows = _chunk([cal.date_button(d) for d in dates], 3)
     rows.append([BTN_BACK, BTN_CANCEL])
+    return ReplyKeyboardMarkup(rows, resize_keyboard=True, one_time_keyboard=True)
+
+
+def redate_kb(dates) -> ReplyKeyboardMarkup:
+    """На выбранную дату мест нет: другая дата — или сменить диаметр."""
+    rows = _chunk([cal.date_button(d) for d in dates], 3)
+    rows.append([BTN_OTHER_DIAM, BTN_CANCEL])
     return ReplyKeyboardMarkup(rows, resize_keyboard=True, one_time_keyboard=True)
 
 
