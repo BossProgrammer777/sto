@@ -166,11 +166,24 @@ async def select_city(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
     context.user_data["redate"] = False
     dates = await _run(sheets.available_dates)
     context.user_data["dates"] = dates
+    busy = context.user_data["busy_dates"] = await _busy_dates(city, dates)
+    legend = "\n❌ — всё занято, выбрать нельзя." if busy else ""
     await update.message.reply_text(
-        f"🏙 <b>{city.title}</b>\n📅 Выберите дату:",
-        parse_mode="HTML", reply_markup=kb.dates_kb(dates),
+        f"🏙 <b>{city.title}</b>\n📅 Выберите дату:{legend}",
+        parse_mode="HTML", reply_markup=kb.dates_kb(dates, busy),
     )
     return SELECT_DATE
+
+
+async def _busy_dates(city: config.City, dates) -> set:
+    """Дни без единого свободного слота — при новой записи их помечаем «занято».
+    Не получилось проверить (сбой Google) — ничего не помечаем."""
+    try:
+        free = set(await _run(sheets.dates_with_free, city, dates, ""))
+    except Exception:  # noqa: BLE001
+        log.exception("Не удалось проверить занятость дней")
+        return set()
+    return {d for d in dates if d not in free}
 
 
 async def select_date(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -191,13 +204,20 @@ async def select_date(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
         await update.message.reply_text("🏙 Выберите город:", reply_markup=kb.cities_kb())
         return SELECT_CITY
 
-    d = cal.parse_date_button(text, context.user_data["dates"])
+    busy = ud.get("busy_dates", set())
+    d = cal.parse_date_button(text, ud["dates"]) or next(
+        (x for x in busy if text == kb.busy_button(x)), None)
     if d is None:
         await update.message.reply_text("🤔 Выберите дату кнопкой.",
-                                        reply_markup=kb.dates_kb(context.user_data["dates"]))
+                                        reply_markup=kb.dates_kb(ud["dates"], busy))
+        return SELECT_DATE
+    if d in busy:
+        await update.message.reply_text(
+            f"😔 На <b>{cal.date_label(d)}</b> всё занято — выберите другой день.",
+            parse_mode="HTML", reply_markup=kb.dates_kb(ud["dates"], busy))
         return SELECT_DATE
 
-    context.user_data["date"] = d
+    ud["date"] = d
     return await _ask_diameter(update, context)
 
 
@@ -269,7 +289,7 @@ async def select_diameter(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     text = update.message.text.strip()
     if text == kb.BTN_BACK:
         await update.message.reply_text("📅 Выберите дату:",
-                                        reply_markup=kb.dates_kb(ud["dates"]))
+                                        reply_markup=kb.dates_kb(ud["dates"], ud.get("busy_dates", set())))
         return SELECT_DATE
     if text == kb.BTN_SKIP:
         diameter = ""

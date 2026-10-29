@@ -32,8 +32,13 @@ def cities_kb() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(rows, resize_keyboard=True, one_time_keyboard=True)
 
 
-def dates_kb(dates) -> ReplyKeyboardMarkup:
-    rows = _chunk([cal.date_button(d) for d in dates], 3)
+def busy_button(d) -> str:
+    """Кнопка дня, где всё занято (при новой записи её нельзя выбрать)."""
+    return f"❌ {cal.date_button(d)} занято"
+
+
+def dates_kb(dates, busy=frozenset()) -> ReplyKeyboardMarkup:
+    rows = _chunk([busy_button(d) if d in busy else cal.date_button(d) for d in dates], 3)
     rows.append([BTN_BACK, BTN_CANCEL])
     return ReplyKeyboardMarkup(rows, resize_keyboard=True, one_time_keyboard=True)
 
