@@ -39,7 +39,7 @@ class StoredClient:
 _NEXT_TIRE_RE = re.compile(r"(?<=\S)[\s,;+]+(?=(?:зимн|летн|літн|всесезон)\w*\s+шин)", re.I)
 
 
-def _split_tires(cell: str) -> list[str]:
+def split_tires(cell: str) -> list[str]:
     """Комплекты из ячейки «Шины»: каждая строка — отдельно; если в одной строке
     подряд несколько шин («Зимняя шина … Летняя шина …») — тоже делим."""
     out = []
@@ -84,7 +84,7 @@ def parse_rows(values: list[list[str]]) -> list[StoredClient]:
         name = cell(r, "name")
         if not name:
             continue
-        lines = _split_tires(cell(r, "tires")) or [""]
+        lines = split_tires(cell(r, "tires")) or [""]
         sets = [TireSet(ln, cell(r, "row"), cell(r, "place"), cell(r, "comment")) for ln in lines]
         by_name.setdefault(_norm(name), (name, []))[1].extend(sets)
     return [StoredClient(name, tuple(sets)) for name, sets in by_name.values()]

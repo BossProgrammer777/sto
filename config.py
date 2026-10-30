@@ -271,9 +271,10 @@ TIME_FORMAT_LEADING_ZERO = False
 
 
 # ─────────────────────── Хранение шин → группа филиала ───────────────────────
-# Для поста можно подключить таблицу хранения шин и группу филиала в Telegram.
-# Тогда при записи бот спрашивает «Клиент с хранения?», ищет его по ФИО и после
-# записи пишет в группу: клиент, ряд/место, шины, дата и время.
+# При записи бот спрашивает «Клиент с хранения?» и после записи сам пишет в тему
+# филиала в группе «ШМ / Зберігання»: клиент, (ряд/место), шины, дата и время.
+#  • Есть таблица хранения (Киев Деревообробна) — клиента ищем по ФИО в ней.
+#  • Таблицы нет (остальные посты) — оператор вставляет ФИО и шины из 1С.
 # Переменные окружения (KEY — ключ поста в верхнем регистре, напр. KYIV):
 #   STORAGE_<KEY>_SHEET — ID или ссылка на Google-таблицу хранения
 #   STORAGE_<KEY>_TAB   — имя листа (необязательно, по умолчанию первый)
@@ -303,15 +304,27 @@ def _parse_chat(raw: str) -> tuple[int | None, int | None]:
     return chat, int(m.group(2)) if m.group(2) else None
 
 
+# Темы филиалов в группе «ШМ / Зберігання» для постов без таблицы хранения
+# («ID_группы_ID_темы», из /chatid в теме). STORAGE_<KEY>_CHAT их переопределяет.
+STORAGE_TOPICS: dict[str, str] = {
+    "kyiv_terekhina": "-1002505574067_1726",  # Філія Київ ПОДІЛ
+    "sofiyivska": "-1002505574067_257",       # Філія Борщагівка
+    "kharkiv": "-1002505574067_5",            # Філія Харків
+    "kharkiv_maidan": "-1002505574067_1323",  # Філія Харків-2 – Майдан Захисників
+    "dnipro": "-1002505574067_4",             # Філія Дніпро
+    "lviv": "-1002505574067_6",               # Філія Львів
+}
+
+
 def _load_storage() -> dict[str, StorageCfg]:
     out: dict[str, StorageCfg] = {}
     for key in CITIES:
         prefix = f"STORAGE_{key.upper()}_"
         sheet = _get(prefix + "SHEET", "").strip()
-        if not sheet:
+        chat = _get(prefix + "CHAT", "").strip() or STORAGE_TOPICS.get(key, "")
+        if not sheet and not chat:
             continue
         m = re.search(r"/d/([A-Za-z0-9_-]+)", sheet)  # можно вставить полную ссылку
-        chat = _get(prefix + "CHAT", "").strip()
         chat_id, topic = _parse_chat(chat) if chat else (None, None)
         out[key] = StorageCfg(m.group(1) if m else sheet, _get(prefix + "TAB", "").strip(),
                               chat_id, topic)

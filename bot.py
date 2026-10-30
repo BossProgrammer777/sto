@@ -14,7 +14,8 @@ import html
 import logging
 import re
 
-from telegram import Update, ReplyKeyboardMarkup
+from telegram import (CopyTextButton, InlineKeyboardButton, InlineKeyboardMarkup, Update,
+                      ReplyKeyboardMarkup)
 from telegram.constants import ChatType
 from telegram.ext import (
     Application, CommandHandler, MessageHandler, ConversationHandler,
@@ -26,8 +27,8 @@ import calendar_utils as cal
 import keyboards as kb
 from prices import price_lines
 from sheets import SheetsClient, SheetError
-from storage import (StorageClient, StoredClient, client_details, client_label, group_message,
-                     place_label, set_lines)
+from storage import (StorageClient, StoredClient, TireSet, client_details, client_label,
+                     group_message, place_label, set_lines, split_tires)
 
 logging.basicConfig(
     format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
@@ -39,7 +40,7 @@ log = logging.getLogger("shino-bot")
 (SELECT_CITY, SELECT_DATE, SELECT_TIME, COLLECT, CONFIRM,
  MENU, SEARCH_QUERY, SEARCH_PICK, ACTION, CONFIRM_DELETE,
  RS_CITY, RS_DATE, RS_TIME, SELECT_DIAMETER, STORAGE_ASK, STORAGE_PICK,
- STORAGE_SETS) = range(17)
+ STORAGE_SETS, STORAGE_TIRES) = range(18)
 
 sheets: SheetsClient  # инициализируется в main()
 storage: StorageClient | None = None  # таблицы хранения (если настроены)
@@ -456,6 +457,9 @@ async def confirm(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         "✅ <b>Записано!</b>\n\n" + _summary_text(ud) + note,
         parse_mode="HTML",
     )
+    copy_text = ud.pop("_copy_text", None)
+    if copy_text:
+        await _send_copy(update, copy_text)
     await update.message.reply_text("Для новой записи нажмите /start")
     return ConversationHandler.END
 
@@ -463,16 +467,26 @@ async def confirm(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
 # ───────────────── Хранение шин → группа филиала ─────────────────
 
 def _storage_on(city: config.City) -> bool:
-    return storage is not None and city.key in config.STORAGE
+    """Спрашивать «Клиент с хранения?»: у поста есть таблица хранения или тема в группе."""
+    cfg = config.STORAGE.get(city.key)
+    return bool(cfg) and (not cfg.sheet_id or storage is not None)
+
+
+def _storage_table(city: config.City) -> bool:
+    """Есть таблица хранения — клиента ищем в ней; иначе ФИО и шины вставляют из 1С."""
+    cfg = config.STORAGE.get(city.key)
+    return bool(cfg and cfg.sheet_id) and storage is not None
 
 
 
 
 async def _ask_storage(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     context.user_data.pop("storage", None)
-    await update.message.reply_text(
-        "📦 Клиент с хранения?\nВведите фамилию (можно часть) — найду его шины в таблице хранения.",
-        reply_markup=kb.storage_ask_kb())
+    if _storage_table(context.user_data["city"]):
+        text = "📦 Клиент с хранения?\nВведите фамилию (можно часть) — найду его шины в таблице хранения."
+    else:
+        text = "📦 Клиент с хранения?\nВставьте ФИО клиента из 1С."
+    await update.message.reply_text(text, reply_markup=kb.storage_ask_kb())
     return STORAGE_ASK
 
 
@@ -494,6 +508,12 @@ async def storage_ask(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
     if len(text) < 2:
         await update.message.reply_text("Введите хотя бы 2 буквы фамилии.", reply_markup=kb.storage_ask_kb())
         return STORAGE_ASK
+    if not _storage_table(ud["city"]):  # таблицы нет — после ФИО просим шины из 1С
+        ud["_st_name"] = text
+        await update.message.reply_text(
+            "🛞 Вставьте шины клиента из 1С (можно несколько строк одним сообщением):",
+            reply_markup=kb.storage_ask_kb())
+        return STORAGE_TIRES
     try:
         hits, total = await _run(storage.search, ud["city"].key, text)
     except Exception as e:  # noqa: BLE001
@@ -534,6 +554,22 @@ async def storage_pick(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
         ud["_st_client"], ud["_st_sel"] = client, set()
         return await _ask_sets(update, context)
     return await storage_ask(update, context)  # ввели другую фамилию — ищем заново
+
+
+async def storage_tires(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Шины клиента с хранения, вставленные из 1С (для постов без таблицы)."""
+    ud = context.user_data
+    text = update.message.text.strip()
+    if text == kb.BTN_BACK:
+        return await _ask_storage(update, context)
+    if text == kb.BTN_NO_STORAGE:
+        return await _storage_done(update, context, None)
+    tires = split_tires(text)
+    if not tires:
+        await update.message.reply_text("🤔 Вставьте шины текстом.", reply_markup=kb.storage_ask_kb())
+        return STORAGE_TIRES
+    client = StoredClient(ud["_st_name"], tuple(TireSet(t, "", "", "") for t in tires))
+    return await _storage_done(update, context, client)
 
 
 def _set_labels(client, sel: set[int]) -> list[str]:
@@ -579,16 +615,33 @@ async def _notify_group(context: ContextTypes.DEFAULT_TYPE, city: config.City, u
     """Отправить запись с хранением в группу филиала. Возвращает пометку для оператора."""
     st = ud.get("storage")
     cfg = config.STORAGE.get(city.key)
-    if not st or not cfg or not cfg.chat_id:
+    if not st or not cfg:
         return ""
     text = group_message(st, city=ud.get("post") or city, d=ud["date"], time_str=ud["time"],
                          data=ud["data"])
+    if not cfg.chat_id:
+        ud["_copy_text"] = text  # группа не настроена — дадим текст скопировать вручную
+        return "\n\n⚠️ Группа филиала не настроена — текст для неё ниже."
     try:
         await context.bot.send_message(cfg.chat_id, text, message_thread_id=cfg.topic)
         return "\n\n📨 Отправлено в группу филиала."
     except Exception as e:  # noqa: BLE001
         log.exception("Не удалось отправить в группу %s", cfg.chat_id)
-        return f"\n\n⚠️ Запись сделана, но в группу не отправилось: {html.escape(str(e))}"
+        ud["_copy_text"] = text
+        return (f"\n\n⚠️ Запись сделана, но в группу не отправилось: {html.escape(str(e))}\n"
+                "Текст для группы — ниже, скопируйте вручную.")
+
+
+async def _send_copy(update: Update, text: str) -> None:
+    """Текст для группы хранения, если бот не смог отправить сам: кнопка «Скопировать»
+    (Telegram копирует до 256 символов), длиннее — блоком, который копируется нажатием."""
+    head = "📋 Текст для группы хранения — вставьте в тему своего филиала:"
+    if len(text) <= 256:
+        await update.message.reply_text(f"{head}\n\n{text}", reply_markup=InlineKeyboardMarkup(
+            [[InlineKeyboardButton("📋 Скопировать", copy_text=CopyTextButton(text))]]))
+    else:
+        await update.message.reply_text(f"{head} (нажмите на текст — он скопируется)\n\n"
+                                        f"<pre>{html.escape(text)}</pre>", parse_mode="HTML")
 
 
 async def chat_id_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -880,6 +933,7 @@ def build_app() -> Application:
             STORAGE_ASK: [cancel_h, MessageHandler(filters.TEXT & ~filters.COMMAND, storage_ask)],
             STORAGE_PICK: [cancel_h, MessageHandler(filters.TEXT & ~filters.COMMAND, storage_pick)],
             STORAGE_SETS: [cancel_h, MessageHandler(filters.TEXT & ~filters.COMMAND, storage_sets)],
+            STORAGE_TIRES: [cancel_h, MessageHandler(filters.TEXT & ~filters.COMMAND, storage_tires)],
             SEARCH_QUERY: [cancel_h, MessageHandler(filters.TEXT & ~filters.COMMAND, search_query)],
             SEARCH_PICK: [cancel_h, MessageHandler(filters.TEXT & ~filters.COMMAND, search_pick)],
             ACTION: [cancel_h, MessageHandler(filters.TEXT & ~filters.COMMAND, action)],
@@ -907,10 +961,13 @@ def main() -> None:
     global sheets
     log.info("Инициализация Google Sheets…")
     sheets = SheetsClient()
-    if config.STORAGE:
+    if any(c.sheet_id for c in config.STORAGE.values()):
         global storage
-        storage = StorageClient(sheets.gc)
-        log.info("Хранение шин подключено для: %s", ", ".join(config.STORAGE))
+        storage = StorageClient(sheets.gc)  # нужен только постам с таблицей хранения
+    if config.STORAGE:
+        log.info("Хранение шин: %s", ", ".join(
+            f"{k} ({'таблица' if c.sheet_id else '1С'} → {c.chat_id}_{c.topic})"
+            for k, c in config.STORAGE.items()))
     log.info("Запуск бота (polling)…")
     app = build_app()
     app.run_polling(allowed_updates=Update.ALL_TYPES)
