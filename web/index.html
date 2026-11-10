@@ -372,7 +372,7 @@
         <h3><b>3.</b> Діаметр і час запису</h3>
         <h4>Діаметр шин</h4>
         <div class="chips" id="diamChips"></div>
-        <div class="hint" id="bigHint" hidden>R20 і більше у Києві — 2 слоти поспіль (≈1 година). Показано лише час, де є місце на обидва.</div>
+        <div class="hint" id="bigHint" hidden>Великі шини — 2 слоти поспіль (≈1 година). Показано лише час, де є місце на обидва.</div>
         <h4>Вільний час</h4>
         <div class="times" id="times"></div>
       </div>
@@ -437,8 +437,7 @@
     { key: "lviv",       name: "м. Львів",                short: "Львів",      layout: "full",   addr: "" },
     { key: "dnipro",     name: "м. Дніпро",               short: "Дніпро",     layout: "full",   addr: "" },
   ];
-  const TWO_POST_CITIES = ["kyiv"];          // де R20+ займає 2 слоти
-  const BIG_DIAMETERS = ["R20", "R21", "R22"];
+  const TWO_SLOTS_FROM = { kyiv: 20, kyiv_terekhina: 19 };  // з якого діаметра запис займає 2 слоти
   const MONTHS_AHEAD = 1;                    // до кінця наступного місяця
   // Адреса API бота на Railway. Порожньо — демо-режим (розклад генерується).
   // Можна також відкрити сторінку як index.html?api=https://<домен>.up.railway.app
@@ -556,7 +555,10 @@
   }
 
   // ───────────────── Правила вільних слотів (порт з sheets.py) ─────────────────
-  const needsTwoSlots = (cityKey, diam) => TWO_POST_CITIES.includes(cityKey) && BIG_DIAMETERS.includes(diam);
+  const needsTwoSlots = (cityKey, diam) => {
+    const from = TWO_SLOTS_FROM[cityKey], m = /^R(\d{2})$/.exec(diam || "");
+    return Boolean(from && m && Number(m[1]) >= from);
+  };
 
   function freeSlots(cityKey, d, diam) {
     const s = getDay(cityKey, d);
@@ -714,7 +716,7 @@
     note.classList.remove("live", "err");
     if (!LIVE) {
       text.innerHTML = `<b>Демо-версія для презентації.</b> Розклад згенеровано автоматично за тими ж правилами, що й у боті:
-        вільний час — лише білі порожні слоти; оранжеві/червоні не пропонуються; R20 і більше у Києві займають 2 слоти поспіль.
+        вільний час — лише білі порожні слоти; оранжеві/червоні не пропонуються; великі шини (Деревообробна R20+, Поділ R19+) займають 2 слоти поспіль.
         У робочій версії розклад братиметься з таблиці «Запис на Шиномонтаж 2026».`;
       $("#mDemoText").textContent = "Демо: запис збережено лише у вашому браузері.";
       return;
@@ -744,7 +746,7 @@
     box.className = "times" + (big ? " wide" : "");
     if (state.time && !slots.some((s) => s.t === state.time)) state.time = null;
     if (!slots.length) {
-      box.innerHTML = `<div class="empty" style="grid-column:1/-1">На ${dayLabel(state.date)} вільного часу немає${big ? " — для R20+ потрібні 2 вільні слоти поспіль" : ""}. Оберіть іншу дату.</div>`;
+      box.innerHTML = `<div class="empty" style="grid-column:1/-1">На ${dayLabel(state.date)} вільного часу немає${big ? ` — для R${TWO_SLOTS_FROM[state.city]}+ потрібні 2 вільні слоти поспіль` : ""}. Оберіть іншу дату.</div>`;
       return;
     }
     for (const s of slots) {

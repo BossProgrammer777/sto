@@ -113,15 +113,21 @@ LAYOUTS: dict[str, dict] = {
     },
 }
 
-# Города, где большие шины (R20+) занимают 2 подряд слота («2 поста»).
-# Пока только Киев Деревообробна (оба поста); Харьков добавится позже —
-# просто впишите ключ сюда.
-TWO_POST_CITIES: set[str] = {"kyiv"}
-BIG_DIAMETERS: set[str] = {"R20", "R21", "R22"}
+# Большие шины занимают 2 подряд слота: пост → с какого диаметра.
+# Киев Деревообробна (оба поста) — с R20, Подол (Терьохіна) — с R19.
+# Другой пост — просто впишите его ключ и диаметр сюда.
+TWO_SLOTS_FROM: dict[str, int] = {"kyiv": 20, "kyiv_terekhina": 19}
+
+
+def two_slots_from(city: "City") -> int | None:
+    """С какого диаметра у поста запись занимает 2 слота (None — правило не действует)."""
+    return TWO_SLOTS_FROM.get(branch_of(city).key)
 
 
 def needs_two_slots(city: "City", diameter: str) -> bool:
-    return branch_of(city).key in TWO_POST_CITIES and (diameter or "").strip() in BIG_DIAMETERS
+    start = two_slots_from(city)
+    m = re.fullmatch(r"[RrРр]\s*(\d{2})", (diameter or "").strip())
+    return bool(start and m and int(m.group(1)) >= start)
 
 
 @dataclass(frozen=True)

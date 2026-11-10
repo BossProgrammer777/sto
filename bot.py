@@ -273,7 +273,7 @@ async def _ask_other_date(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     dates = [x for x in dates if x != ud["date"]]
     ud["redate"], ud["redate_dates"] = True, dates
     what = f" для {diameter}" if diameter else ""
-    note = "\n(для больших шин R20+ нужны 2 свободных слота подряд)" \
+    note = f"\n(для R{config.two_slots_from(city)}+ нужны 2 свободных слота подряд)" \
         if config.needs_two_slots(city, diameter) else ""
     if dates:
         text = (f"😔 На <b>{cal.date_label(ud['date'])}</b> свободного времени{what} нет.{note}\n"
