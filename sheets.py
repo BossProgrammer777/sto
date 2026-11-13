@@ -144,6 +144,9 @@ class MonthData:
     colors: list[list[dict | None]]
     hidden: set[int] = field(default_factory=set)                # скрытые колонки
     formulas: set[tuple[int, int]] = field(default_factory=set)  # ячейки с формулой
+    # Разметка листа (блоки постов, строки дат) — считается один раз на загрузку,
+    # а не на каждую дату: иначе пометки дат при выборе города заметно тормозят.
+    memo: dict = field(default_factory=dict, repr=False)
 
     def val(self, r: int, c: int) -> str:
         if 0 <= r < len(self.values) and 0 <= c < len(self.values[r]):
@@ -262,6 +265,11 @@ class SheetsClient:
         заголовку над ним (City.labels, затем City.alt_labels). Если заголовок
         не прочитался, а блоков столько же, сколько городов, — по порядку.
         """
+        if "blocks" not in md.memo:
+            md.memo["blocks"] = self._find_blocks(md)
+        return md.memo["blocks"]
+
+    def _find_blocks(self, md: MonthData) -> tuple[int, dict[str, int]]:
         header_row = None
         starts: list[int] = []
         for r in range(min(8, md.nrows)):
@@ -350,7 +358,10 @@ class SheetsClient:
         без своей колонки «Время» берём их у основного поста (строки общие)."""
         time_col = start_col + config.column_index(city, "Время")
         width = len(config.LAYOUTS[city.layout]["columns"])
-        if city.parent and not any(_norm_time(md.val(r, time_col)) for r in range(md.nrows)):
+        key = ("own_times", time_col)
+        if key not in md.memo:
+            md.memo[key] = any(_norm_time(md.val(r, time_col)) for r in range(md.nrows))
+        if city.parent and not md.memo[key]:
             parent = config.CITIES[city.parent]
             ps, _ = self._block_start_col(md, parent)
             return (ps + config.column_index(parent, "Время"), ps,
@@ -361,11 +372,11 @@ class SheetsClient:
                       d: date) -> tuple[int, int]:
         """Границы строк секции даты: (первая строка секции, следующая дата/конец)."""
         target = d.strftime("%d.%m.%Y")
-        date_rows: list[tuple[int, str]] = []
-        for r in range(md.nrows):
-            ds = _row_date(md, r, start_col, width)
-            if ds:
-                date_rows.append((r, ds))
+        key = ("date_rows", start_col, width)
+        if key not in md.memo:  # строки дат блока — один проход по листу
+            md.memo[key] = [(r, ds) for r in range(md.nrows)
+                            if (ds := _row_date(md, r, start_col, width))]
+        date_rows: list[tuple[int, str]] = md.memo[key]
         start = next((r for r, ds in date_rows if ds == target), None)
         if start is None:
             raise SheetError(f"Дата «{target}» не найдена на листе {md.title}")
