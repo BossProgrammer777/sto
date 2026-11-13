@@ -168,10 +168,14 @@ async def select_city(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
     dates = await _run(sheets.available_dates)
     context.user_data["dates"] = dates
     busy = context.user_data["busy_dates"] = await _busy_dates(city, dates)
+    upto = context.user_data["upto_dates"] = await _small_only_dates(city, dates, busy)
     legend = "\n❌ — всё занято, выбрать нельзя." if busy else ""
+    if upto:
+        legend += (f"\n«(до R{config.two_slots_from(city) - 1})» — места только для меньших шин, "
+                   f"для R{config.two_slots_from(city)}+ нет.")
     await update.message.reply_text(
         f"🏙 <b>{city.title}</b>\n📅 Выберите дату:{legend}",
-        parse_mode="HTML", reply_markup=kb.dates_kb(dates, busy),
+        parse_mode="HTML", reply_markup=kb.dates_kb(dates, busy, upto),
     )
     return SELECT_DATE
 
@@ -185,6 +189,21 @@ async def _busy_dates(city: config.City, dates) -> set:
         log.exception("Не удалось проверить занятость дней")
         return set()
     return {d for d in dates if d not in free}
+
+
+async def _small_only_dates(city: config.City, dates, busy) -> dict:
+    """Посты, где большие шины занимают 2 слота (Деревообробна, Подол): дни, где
+    место есть только для меньших диаметров → {дата: макс. диаметр}, напр. {14.11: 18}."""
+    start = config.two_slots_from(city)
+    if not start:
+        return {}
+    open_days = [d for d in dates if d not in busy]
+    try:
+        big_ok = set(await _run(sheets.dates_with_free, city, open_days, f"R{start}"))
+    except Exception:  # noqa: BLE001
+        log.exception("Не удалось проверить места для больших шин")
+        return {}
+    return {d: start - 1 for d in open_days if d not in big_ok}
 
 
 async def select_date(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -205,17 +224,17 @@ async def select_date(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
         await update.message.reply_text("🏙 Выберите город:", reply_markup=kb.cities_kb())
         return SELECT_CITY
 
-    busy = ud.get("busy_dates", set())
-    d = cal.parse_date_button(text, ud["dates"]) or next(
-        (x for x in busy if text == kb.busy_button(x)), None)
+    busy, upto = ud.get("busy_dates", set()), ud.get("upto_dates", {})
+    d = next((x for x in ud["dates"]
+              if text in (cal.date_button(x), kb.date_btn(x, busy, upto))), None)
     if d is None:
         await update.message.reply_text("🤔 Выберите дату кнопкой.",
-                                        reply_markup=kb.dates_kb(ud["dates"], busy))
+                                        reply_markup=kb.dates_kb(ud["dates"], busy, upto))
         return SELECT_DATE
     if d in busy:
         await update.message.reply_text(
             f"😔 На <b>{cal.date_label(d)}</b> всё занято — выберите другой день.",
-            parse_mode="HTML", reply_markup=kb.dates_kb(ud["dates"], busy))
+            parse_mode="HTML", reply_markup=kb.dates_kb(ud["dates"], busy, upto))
         return SELECT_DATE
 
     ud["date"] = d
@@ -228,8 +247,10 @@ async def _ask_diameter(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
     city: config.City = context.user_data["city"]
     values = await _run(sheets.read_validation_values, city, "Диаметр", "diameter")
     context.user_data["_diam_choices"] = values
+    upto = context.user_data.get("upto_dates", {}).get(context.user_data.get("date"))
+    note = f"\n⚠️ На эту дату для R{upto + 1}+ мест нет — только до R{upto}." if upto else ""
     await update.message.reply_text(
-        "⭕ Выберите диаметр:",
+        f"⭕ Выберите диаметр:{note}",
         reply_markup=kb.choice_kb(values, per_row=4, allow_skip=True))
     return SELECT_DIAMETER
 
@@ -290,7 +311,8 @@ async def select_diameter(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     text = update.message.text.strip()
     if text == kb.BTN_BACK:
         await update.message.reply_text("📅 Выберите дату:",
-                                        reply_markup=kb.dates_kb(ud["dates"], ud.get("busy_dates", set())))
+                                        reply_markup=kb.dates_kb(ud["dates"], ud.get("busy_dates", set()),
+                                                                 ud.get("upto_dates", {})))
         return SELECT_DATE
     if text == kb.BTN_SKIP:
         diameter = ""

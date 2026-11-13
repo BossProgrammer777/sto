@@ -569,7 +569,7 @@
       if (!(empty(s[i]) && s[i].color === "W")) continue;          // старт — лише білий порожній
       if (big) {
         const hasSecond = i + 1 < s.length && empty(s[i + 1]);       // другий — будь-який порожній
-        const lastWhite = !s.slice(i + 1).some((x) => empty(x) && x.color === "W");
+        const lastWhite = !s.slice(i + 1).some((x) => x.color === "W");  // последний белый слот дня по расписанию
         if (hasSecond || lastWhite) out.push({ t: s[i].t, two: hasSecond });
       } else {
         out.push({ t: s[i].t, two: false });

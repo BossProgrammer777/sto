@@ -418,7 +418,7 @@ class SheetsClient:
         Обычно: ячейка «Номер заказа» белая и пустая.
         Большие шины (config.TWO_SLOTS_FROM: Киев R20+, Подол R19+) занимают 2 подряд слота: слот подходит,
         если он пуст (цвет неважен) И следующий слот пуст ИЛИ это последний
-        свободный слот дня. Пустой = пуста вся строка блока (см. _row_busy).
+        белый слот дня по расписанию. Пустой = пуста вся строка блока (см. _row_busy).
         """
         start_col, slots = self._section_slots(md, city, d)
         order_col = start_col + config.column_index(city, "Номер заказа")
@@ -436,9 +436,11 @@ class SheetsClient:
                 continue
             if big:
                 # Большие: второй слот — любой ПУСТОЙ (белый/оранжевый/красный);
-                # либо это последний белый слот дня — тогда 1 слот.
+                # либо это последний белый слот дня ПО РАСПИСАНИЮ (дальше только
+                # закрытые) — тогда 1 слот. Не «последний свободный»: если после него
+                # есть белый слот с записью, второго слота нет.
                 has_second = (i + 1 < n) and empties[i + 1]
-                is_last_white = not any(empties[j] and whites[j] for j in range(i + 1, n))
+                is_last_white = not any(whites[j] for j in range(i + 1, n))
                 if has_second or is_last_white:
                     free.append(t)
             else:

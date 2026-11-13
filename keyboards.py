@@ -37,8 +37,17 @@ def busy_button(d) -> str:
     return f"❌ {cal.date_button(d)} занято"
 
 
-def dates_kb(dates, busy=frozenset()) -> ReplyKeyboardMarkup:
-    rows = _chunk([busy_button(d) if d in busy else cal.date_button(d) for d in dates], 3)
+def date_btn(d, busy=frozenset(), upto=None) -> str:
+    """Кнопка дня: «❌ … занято», «СБ 14.11 (до R18)» (большим шинам места нет) или обычная."""
+    if d in busy:
+        return busy_button(d)
+    if upto and d in upto:
+        return f"{cal.date_button(d)} (до R{upto[d]})"
+    return cal.date_button(d)
+
+
+def dates_kb(dates, busy=frozenset(), upto=None) -> ReplyKeyboardMarkup:
+    rows = _chunk([date_btn(d, busy, upto) for d in dates], 3)
     rows.append([BTN_BACK, BTN_CANCEL])
     return ReplyKeyboardMarkup(rows, resize_keyboard=True, one_time_keyboard=True)
 
