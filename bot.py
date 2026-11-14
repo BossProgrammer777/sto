@@ -475,9 +475,10 @@ async def confirm(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         return ConversationHandler.END
 
     note = await _notify_group(context, city, ud)
+    comment, copy_kb = _comment_1c(ud["date"], ud["time"])
     await update.message.reply_text(
-        "✅ <b>Записано!</b>\n\n" + _summary_text(ud) + note,
-        parse_mode="HTML",
+        "✅ <b>Записано!</b>\n\n" + _summary_text(ud) + note + comment,
+        parse_mode="HTML", reply_markup=copy_kb,
     )
     copy_text = ud.pop("_copy_text", None)
     if copy_text:
@@ -667,6 +668,15 @@ async def _notify_group(context: ContextTypes.DEFAULT_TYPE, city: config.City, u
         ud["_copy_text"] = text
         return (f"\n\n⚠️ Запись сделана, но в группу не отправилось: {html.escape(str(e))}\n"
                 "Текст для группы — ниже, скопируйте вручную.")
+
+
+def _comment_1c(d, time_str: str) -> tuple[str, InlineKeyboardMarkup]:
+    """Строка для комментария заказа в 1С (как пишут МОП) + кнопка «Скопировать»:
+    «Дата: ВС 15.11.2026  Время: 11:30»."""
+    line = f"Дата: {cal.date_label(d)}  Время: {time_str}"
+    text = f"\n\n📋 Для комментария в заказе 1С:\n<code>{html.escape(line)}</code>"
+    return text, InlineKeyboardMarkup(
+        [[InlineKeyboardButton("📋 Скопировать для 1С", copy_text=CopyTextButton(line))]])
 
 
 async def _send_copy(update: Update, text: str) -> None:
@@ -908,11 +918,12 @@ async def rs_time(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         await update.message.reply_text(f"⚠️ Не удалось перенести: {e}")
         return await _show_menu(update)
 
+    comment, copy_kb = _comment_1c(new_d, new_time)  # новую дату — тоже в комментарий заказа
     await update.message.reply_text(
         "✅ <b>Перенесено!</b>\n"
         f"Было: {_booking_label(b)}\n"
-        f"Стало: {cal.date_button(new_d)} {new_time} — {new_post.full_title}",
-        parse_mode="HTML")
+        f"Стало: {cal.date_button(new_d)} {new_time} — {new_post.full_title}" + comment,
+        parse_mode="HTML", reply_markup=copy_kb)
     return await _show_menu(update)
 
 
