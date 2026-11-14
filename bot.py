@@ -504,6 +504,7 @@ def _storage_table(city: config.City) -> bool:
 
 async def _ask_storage(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     context.user_data.pop("storage", None)
+    context.user_data.pop("_st_query", None)
     if _storage_table(context.user_data["city"]):
         text = "📦 Клиент с хранения?\nВведите фамилию (можно часть) — найду его шины в таблице хранения."
     else:
@@ -527,15 +528,13 @@ async def storage_ask(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
         return await _ask_current_field(update, context)
     if text == kb.BTN_NO_STORAGE:
         return await _storage_done(update, context, None)
-    if len(text) < 2:
+    if text == kb.BTN_MANUAL_TIRES and ud.get("_st_query"):  # в таблице не нашли — ФИО из поиска
+        return await _ask_tires(update, context, ud["_st_query"])
+    if len(text) < 2 or text in (kb.BTN_MANUAL_TIRES, kb.BTN_TIRES_NOT_LISTED):
         await update.message.reply_text("Введите хотя бы 2 буквы фамилии.", reply_markup=kb.storage_ask_kb())
         return STORAGE_ASK
     if not _storage_table(ud["city"]):  # таблицы нет — после ФИО просим шины из 1С
-        ud["_st_name"] = text
-        await update.message.reply_text(
-            "🛞 Вставьте шины клиента из 1С (можно несколько строк одним сообщением):",
-            reply_markup=kb.storage_ask_kb())
-        return STORAGE_TIRES
+        return await _ask_tires(update, context, text)
     try:
         hits, total = await _run(storage.search, ud["city"].key, text)
     except Exception as e:  # noqa: BLE001
@@ -545,9 +544,12 @@ async def storage_ask(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
             reply_markup=kb.storage_ask_kb())
         return STORAGE_ASK
     if not hits:
+        ud["_st_query"] = text
         await update.message.reply_text(
-            f"😔 «{text}» в хранении не нашёл. Попробуйте иначе или нажмите «{kb.BTN_NO_STORAGE}».",
-            reply_markup=kb.storage_ask_kb())
+            f"😔 «{text}» в таблице хранения не нашёл.\n"
+            f"Можно «{kb.BTN_MANUAL_TIRES}» (ФИО — как ввели), поискать другую фамилию "
+            f"или «{kb.BTN_NO_STORAGE}».",
+            reply_markup=kb.storage_ask_kb(manual=True))
         return STORAGE_ASK
     ud["_st_hits"] = hits
     ud["_st_labels"] = [client_label(c) for c in hits]
@@ -557,7 +559,7 @@ async def storage_ask(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
         lines += ["", f"👤 <b>{html.escape(c.name)}</b>", *(html.escape(ln) for ln in client_details(c))]
     lines += ["", "Выберите клиента:"]
     await update.message.reply_text("\n".join(lines), parse_mode="HTML",
-                                    reply_markup=kb.storage_pick_kb(ud["_st_labels"]))
+                                    reply_markup=kb.storage_pick_kb(ud["_st_labels"], manual=len(hits) == 1))
     return STORAGE_PICK
 
 
@@ -568,6 +570,8 @@ async def storage_pick(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
         return await _ask_storage(update, context)
     if text == kb.BTN_NO_STORAGE:
         return await _storage_done(update, context, None)
+    if text == kb.BTN_TIRES_NOT_LISTED and len(ud.get("_st_hits", [])) == 1:
+        return await _ask_tires(update, context, ud["_st_hits"][0].name)  # клиент тот, шины не те
     labels = ud.get("_st_labels", [])
     if text in labels:
         client = ud["_st_hits"][labels.index(text)]
@@ -576,6 +580,15 @@ async def storage_pick(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
         ud["_st_client"], ud["_st_sel"] = client, set()
         return await _ask_sets(update, context)
     return await storage_ask(update, context)  # ввели другую фамилию — ищем заново
+
+
+async def _ask_tires(update: Update, context: ContextTypes.DEFAULT_TYPE, name: str) -> int:
+    """Ручной ввод шин из 1С: для постов без таблицы и когда в таблице нет нужного."""
+    context.user_data["_st_name"] = name
+    await update.message.reply_text(
+        f"🛞 {name}\nВставьте шины клиента из 1С (можно несколько строк одним сообщением):",
+        reply_markup=kb.storage_ask_kb())
+    return STORAGE_TIRES
 
 
 async def storage_tires(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -621,6 +634,8 @@ async def storage_sets(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
         return STORAGE_PICK
     if text == kb.BTN_NO_STORAGE:
         return await _storage_done(update, context, None)
+    if text == kb.BTN_TIRES_NOT_LISTED:  # клиент тот, но нужных шин в таблице нет
+        return await _ask_tires(update, context, c.name)
     if text == kb.BTN_SETS_DONE:
         if not sel:
             return await _ask_sets(update, context, "Отметьте хотя бы один комплект.")

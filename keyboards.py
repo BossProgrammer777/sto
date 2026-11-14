@@ -19,6 +19,8 @@ BTN_YES_DELETE = "✅ Да, удалить"
 BTN_NO_STORAGE = "⏭ Без хранения"
 BTN_SETS_DONE = "✔️ Готово"
 BTN_OTHER_DIAM = "⭕ Другой диаметр"
+BTN_MANUAL_TIRES = "✍️ Ввести шины вручную (из 1С)"       # клиента нет в таблице хранения
+BTN_TIRES_NOT_LISTED = "✍️ Шин нет в списке — ввести вручную"  # клиент есть, шины не те
 
 
 def _chunk(items: list[str], per_row: int) -> list[list[str]]:
@@ -121,12 +123,16 @@ def confirm_delete_kb() -> ReplyKeyboardMarkup:
 
 # ── Хранение шин ──
 
-def storage_ask_kb() -> ReplyKeyboardMarkup:
-    return ReplyKeyboardMarkup([[BTN_NO_STORAGE], [BTN_BACK, BTN_CANCEL]], resize_keyboard=True)
+def storage_ask_kb(manual: bool = False) -> ReplyKeyboardMarkup:
+    rows = [[BTN_MANUAL_TIRES]] if manual else []  # manual — клиента в таблице не нашли
+    rows += [[BTN_NO_STORAGE], [BTN_BACK, BTN_CANCEL]]
+    return ReplyKeyboardMarkup(rows, resize_keyboard=True)
 
 
-def storage_pick_kb(labels: list[str]) -> ReplyKeyboardMarkup:
+def storage_pick_kb(labels: list[str], manual: bool = False) -> ReplyKeyboardMarkup:
     rows = [[lbl] for lbl in labels]
+    if manual:  # найден один клиент — его шин может не быть в таблице
+        rows.append([BTN_TIRES_NOT_LISTED])
     rows.append([BTN_NO_STORAGE])
     rows.append([BTN_BACK, BTN_CANCEL])
     return ReplyKeyboardMarkup(rows, resize_keyboard=True, one_time_keyboard=True)
@@ -135,6 +141,7 @@ def storage_pick_kb(labels: list[str]) -> ReplyKeyboardMarkup:
 def storage_sets_kb(labels: list[str]) -> ReplyKeyboardMarkup:
     rows = [[lbl] for lbl in labels]
     rows.append([BTN_SETS_DONE])
+    rows.append([BTN_TIRES_NOT_LISTED])
     rows.append([BTN_NO_STORAGE])
     rows.append([BTN_BACK, BTN_CANCEL])
     return ReplyKeyboardMarkup(rows, resize_keyboard=True)
