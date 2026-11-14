@@ -672,8 +672,8 @@ async def _notify_group(context: ContextTypes.DEFAULT_TYPE, city: config.City, u
 
 def _comment_1c(d, time_str: str) -> tuple[str, InlineKeyboardMarkup]:
     """Строка для комментария заказа в 1С (как пишут МОП) + кнопка «Скопировать»:
-    «Дата: ВС 15.11.2026  Время: 11:30»."""
-    line = f"Дата: {cal.date_label(d)}  Время: {time_str}"
+    «Шиномонтаж. Дата: ВС 15.11.2026  Время: 11:30»."""
+    line = f"Шиномонтаж. Дата: {cal.date_label(d)}  Время: {time_str}"
     text = f"\n\n📋 Для комментария в заказе 1С:\n<code>{html.escape(line)}</code>"
     return text, InlineKeyboardMarkup(
         [[InlineKeyboardButton("📋 Скопировать для 1С", copy_text=CopyTextButton(line))]])
