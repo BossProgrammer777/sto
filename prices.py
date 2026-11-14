@@ -99,8 +99,34 @@ def price_lines(city: config.City, diameter: str, car_type: str = "") -> list[st
             lines.append(f"• кроссовер / минивэн / микроавтобус — {_grn(suv)}")
     else:
         return []
+    return lines + _extras(p)
+
+
+def _extras(p: PriceList) -> list[str]:
+    """Надбавки за низкий профиль и Run-Flat (пишем всегда)."""
     grn, per = p.low_profile
     low = f"+{_grn(grn)} за шину (+{_grn(grn * 4)} за комплект)" if per == "шину" else f"+{_grn(grn)} за комплект"
-    lines.append(f"➕ Профиль 45% и меньше: {low}")
-    lines.append(f"➕ Run-Flat: +{_grn(p.run_flat)} за комплект")
-    return lines
+    return [f"➕ Профиль 45% и меньше: {low}", f"➕ Run-Flat: +{_grn(p.run_flat)} за комплект"]
+
+
+def price_table(city: config.City) -> list[str]:
+    """Весь прайс поста (при выборе даты, когда диаметр ещё не выбран):
+    строки «R15–R16 — 1 500 / 1 660 грн» (легковой / кроссовер) + надбавки.
+    Подряд идущие диаметры с одинаковыми ценами склеиваем в одну строку."""
+    p = PRICES.get(PRICE_OF.get(city.key, ""))
+    if not p:
+        return []
+    rows: list[list] = []  # [от R, до R, легковой, кроссовер]
+    for r in range(12, 25):
+        pair = [_find(p.car, r), _find(p.suv, r)]
+        if pair == [None, None]:
+            continue
+        if rows and rows[-1][1] == r - 1 and rows[-1][2:] == pair:
+            rows[-1][1] = r
+        else:
+            rows.append([r, r, *pair])
+    num = lambda n: f"{n:,}".replace(",", " ") if n else "—"
+    lines = ["💰 Шиномонтаж (4 колеса), легковой / кроссовер:"]
+    for lo, hi, car, suv in rows:
+        lines.append(f"{f'R{lo}' if lo == hi else f'R{lo}–R{hi}'} — {num(car)} / {num(suv)} грн")
+    return lines + _extras(p)

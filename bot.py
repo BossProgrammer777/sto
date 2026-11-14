@@ -25,7 +25,7 @@ from telegram.ext import (
 import config
 import calendar_utils as cal
 import keyboards as kb
-from prices import price_lines
+from prices import price_lines, price_table
 from sheets import SheetsClient, SheetError
 from storage import (StorageClient, StoredClient, TireSet, client_details, client_label,
                      group_message, place_label, set_lines, split_tires)
@@ -173,8 +173,9 @@ async def select_city(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
     if upto:
         legend += (f"\n«(до R{config.two_slots_from(city) - 1})» — места только для меньших шин, "
                    f"для R{config.two_slots_from(city)}+ нет.")
+    prices = "\n".join(html.escape(ln) for ln in price_table(city))
     await update.message.reply_text(
-        f"🏙 <b>{city.title}</b>\n📅 Выберите дату:{legend}",
+        f"🏙 <b>{city.title}</b>\n" + (f"{prices}\n\n" if prices else "") + f"📅 Выберите дату:{legend}",
         parse_mode="HTML", reply_markup=kb.dates_kb(dates, busy, upto),
     )
     return SELECT_DATE
