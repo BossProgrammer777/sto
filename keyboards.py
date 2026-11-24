@@ -11,6 +11,8 @@ BTN_CANCEL = "❌ Отмена"
 BTN_BACK = "⬅️ Назад"
 BTN_SKIP = "⏭ Пропустить"
 BTN_NEW = "➕ Новая запись"
+BTN_PICKUP = "📦 Забрать хранение (без шиномонтажа)"
+BTN_NO_TIME = "⏭ Без времени"
 BTN_FIND = "🔍 Найти / изменить запись"
 BTN_DELETE = "🗑 Удалить запись"
 BTN_MOVE = "🔁 Перенести"
@@ -97,7 +99,7 @@ def remove_kb() -> ReplyKeyboardRemove:
 # ── Меню и поиск/изменение записи ──
 
 def menu_kb() -> ReplyKeyboardMarkup:
-    return ReplyKeyboardMarkup([[BTN_NEW], [BTN_FIND]],
+    return ReplyKeyboardMarkup([[BTN_NEW], [BTN_PICKUP], [BTN_FIND]],
                                resize_keyboard=True, one_time_keyboard=True)
 
 
@@ -123,25 +125,36 @@ def confirm_delete_kb() -> ReplyKeyboardMarkup:
 
 # ── Хранение шин ──
 
-def storage_ask_kb(manual: bool = False) -> ReplyKeyboardMarkup:
+# skip=False — «Забрать хранение»: там клиент с хранения всегда, «Без хранения» не нужна.
+def storage_ask_kb(manual: bool = False, skip: bool = True) -> ReplyKeyboardMarkup:
     rows = [[BTN_MANUAL_TIRES]] if manual else []  # manual — клиента в таблице не нашли
-    rows += [[BTN_NO_STORAGE], [BTN_BACK, BTN_CANCEL]]
+    rows += ([[BTN_NO_STORAGE]] if skip else []) + [[BTN_BACK, BTN_CANCEL]]
     return ReplyKeyboardMarkup(rows, resize_keyboard=True)
 
 
-def storage_pick_kb(labels: list[str], manual: bool = False) -> ReplyKeyboardMarkup:
+def storage_pick_kb(labels: list[str], manual: bool = False, skip: bool = True) -> ReplyKeyboardMarkup:
     rows = [[lbl] for lbl in labels]
     if manual:  # найден один клиент — его шин может не быть в таблице
         rows.append([BTN_TIRES_NOT_LISTED])
-    rows.append([BTN_NO_STORAGE])
+    if skip:
+        rows.append([BTN_NO_STORAGE])
     rows.append([BTN_BACK, BTN_CANCEL])
     return ReplyKeyboardMarkup(rows, resize_keyboard=True, one_time_keyboard=True)
 
 
-def storage_sets_kb(labels: list[str]) -> ReplyKeyboardMarkup:
+def storage_sets_kb(labels: list[str], skip: bool = True) -> ReplyKeyboardMarkup:
     rows = [[lbl] for lbl in labels]
     rows.append([BTN_SETS_DONE])
     rows.append([BTN_TIRES_NOT_LISTED])
-    rows.append([BTN_NO_STORAGE])
+    if skip:
+        rows.append([BTN_NO_STORAGE])
     rows.append([BTN_BACK, BTN_CANCEL])
     return ReplyKeyboardMarkup(rows, resize_keyboard=True)
+
+
+def pickup_time_kb(times: list[str]) -> ReplyKeyboardMarkup:
+    """Время выдачи хранения — по желанию клиента."""
+    rows = _chunk(times, 4)
+    rows.append([BTN_NO_TIME])
+    rows.append([BTN_BACK, BTN_CANCEL])
+    return ReplyKeyboardMarkup(rows, resize_keyboard=True, one_time_keyboard=True)

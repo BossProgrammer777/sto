@@ -28,7 +28,7 @@ import keyboards as kb
 from prices import price_lines, price_table
 from sheets import SheetsClient, SheetError
 from storage import (StorageClient, StoredClient, TireSet, client_details, client_label,
-                     group_message, place_label, set_lines, split_tires)
+                     group_message, pickup_message, place_label, set_lines, split_tires)
 
 logging.basicConfig(
     format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
@@ -40,7 +40,7 @@ log = logging.getLogger("shino-bot")
 (SELECT_CITY, SELECT_DATE, SELECT_TIME, COLLECT, CONFIRM,
  MENU, SEARCH_QUERY, SEARCH_PICK, ACTION, CONFIRM_DELETE,
  RS_CITY, RS_DATE, RS_TIME, SELECT_DIAMETER, STORAGE_ASK, STORAGE_PICK,
- STORAGE_SETS, STORAGE_TIRES) = range(18)
+ STORAGE_SETS, STORAGE_TIRES, PU_CITY, PU_DATE, PU_TIME, PU_MOP, PU_CONFIRM) = range(23)
 
 sheets: SheetsClient  # инициализируется в main()
 storage: StorageClient | None = None  # таблицы хранения (если настроены)
@@ -148,6 +148,12 @@ async def menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         context.user_data.clear()
         await update.message.reply_text("🏙 Выберите город:", reply_markup=kb.cities_kb())
         return SELECT_CITY
+    if text == kb.BTN_PICKUP:
+        context.user_data.clear()
+        context.user_data["mode"] = "pickup"
+        await update.message.reply_text("📦 Забрать хранение (без шиномонтажа).\n🏙 Выберите город:",
+                                        reply_markup=kb.cities_kb())
+        return PU_CITY
     if text == kb.BTN_FIND:
         await update.message.reply_text(
             "🔍 Введите <b>номер заказа</b> или <b>номер телефона</b> клиента:",
@@ -504,26 +510,42 @@ def _storage_table(city: config.City) -> bool:
 
 
 
+def _pickup(ud: dict) -> bool:
+    """Режим «Забрать хранение» (без шиномонтажа)."""
+    return ud.get("mode") == "pickup"
+
+
 async def _ask_storage(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    context.user_data.pop("storage", None)
-    context.user_data.pop("_st_query", None)
-    if _storage_table(context.user_data["city"]):
-        text = "📦 Клиент с хранения?\nВведите фамилию (можно часть) — найду его шины в таблице хранения."
+    ud = context.user_data
+    ud.pop("storage", None)
+    ud.pop("_st_query", None)
+    head = "📦 Кто забирает хранение?" if _pickup(ud) else "📦 Клиент с хранения?"
+    if _storage_table(ud["city"]):
+        text = f"{head}\nВведите фамилию (можно часть) — найду его шины в таблице хранения."
     else:
-        text = "📦 Клиент с хранения?\nВставьте ФИО клиента из 1С."
-    await update.message.reply_text(text, reply_markup=kb.storage_ask_kb())
+        text = f"{head}\nВставьте ФИО клиента из 1С."
+    await update.message.reply_text(text, reply_markup=kb.storage_ask_kb(skip=not _pickup(ud)))
     return STORAGE_ASK
 
 
 async def _storage_done(update: Update, context: ContextTypes.DEFAULT_TYPE, client) -> int:
-    context.user_data["storage"] = client
-    context.user_data["storage_asked"] = True
+    ud = context.user_data
+    ud["storage"] = client
+    ud["storage_asked"] = True
+    if _pickup(ud):  # «Забрать хранение»: дальше дата выдачи
+        if client is None:
+            await update.message.reply_text("Выдача хранения отменена.", reply_markup=kb.remove_kb())
+            return await _show_menu(update)
+        return await _pu_ask_date(update, context)
     return await _ask_current_field(update, context)  # → сводка и подтверждение
 
 
 async def storage_ask(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     ud = context.user_data
     text = update.message.text.strip()
+    if text == kb.BTN_BACK and _pickup(ud):  # «Забрать хранение»: назад к выбору города
+        await update.message.reply_text("🏙 Выберите город:", reply_markup=kb.cities_kb())
+        return PU_CITY
     if text == kb.BTN_BACK:  # назад к последнему полю (МОП)
         ud["field_idx"] = len(ud["fields"]) - 1
         ud["data"].pop(ud["fields"][-1], None)
@@ -533,7 +555,8 @@ async def storage_ask(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
     if text == kb.BTN_MANUAL_TIRES and ud.get("_st_query"):  # в таблице не нашли — ФИО из поиска
         return await _ask_tires(update, context, ud["_st_query"])
     if len(text) < 2 or text in (kb.BTN_MANUAL_TIRES, kb.BTN_TIRES_NOT_LISTED):
-        await update.message.reply_text("Введите хотя бы 2 буквы фамилии.", reply_markup=kb.storage_ask_kb())
+        await update.message.reply_text("Введите хотя бы 2 буквы фамилии.",
+                                        reply_markup=kb.storage_ask_kb(skip=not _pickup(ud)))
         return STORAGE_ASK
     if not _storage_table(ud["city"]):  # таблицы нет — после ФИО просим шины из 1С
         return await _ask_tires(update, context, text)
@@ -543,15 +566,15 @@ async def storage_ask(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
         log.exception("Таблица хранения недоступна")
         await update.message.reply_text(
             f"⚠️ Не удалось прочитать таблицу хранения: {e}\nМожно продолжить «{kb.BTN_NO_STORAGE}».",
-            reply_markup=kb.storage_ask_kb())
+            reply_markup=kb.storage_ask_kb(skip=not _pickup(ud)))
         return STORAGE_ASK
     if not hits:
         ud["_st_query"] = text
+        alt = "" if _pickup(ud) else f" или «{kb.BTN_NO_STORAGE}»"
         await update.message.reply_text(
             f"😔 «{text}» в таблице хранения не нашёл.\n"
-            f"Можно «{kb.BTN_MANUAL_TIRES}» (ФИО — как ввели), поискать другую фамилию "
-            f"или «{kb.BTN_NO_STORAGE}».",
-            reply_markup=kb.storage_ask_kb(manual=True))
+            f"Можно «{kb.BTN_MANUAL_TIRES}» (ФИО — как ввели), поискать другую фамилию{alt}.",
+            reply_markup=kb.storage_ask_kb(manual=True, skip=not _pickup(ud)))
         return STORAGE_ASK
     ud["_st_hits"] = hits
     ud["_st_labels"] = [client_label(c) for c in hits]
@@ -561,7 +584,8 @@ async def storage_ask(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
         lines += ["", f"👤 <b>{html.escape(c.name)}</b>", *(html.escape(ln) for ln in client_details(c))]
     lines += ["", "Выберите клиента:"]
     await update.message.reply_text("\n".join(lines), parse_mode="HTML",
-                                    reply_markup=kb.storage_pick_kb(ud["_st_labels"], manual=len(hits) == 1))
+                                    reply_markup=kb.storage_pick_kb(ud["_st_labels"], manual=len(hits) == 1,
+                                                                    skip=not _pickup(ud)))
     return STORAGE_PICK
 
 
@@ -589,7 +613,7 @@ async def _ask_tires(update: Update, context: ContextTypes.DEFAULT_TYPE, name: s
     context.user_data["_st_name"] = name
     await update.message.reply_text(
         f"🛞 {name}\nВставьте шины клиента из 1С (можно несколько строк одним сообщением):",
-        reply_markup=kb.storage_ask_kb())
+        reply_markup=kb.storage_ask_kb(skip=not _pickup(context.user_data)))
     return STORAGE_TIRES
 
 
@@ -603,7 +627,8 @@ async def storage_tires(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
         return await _storage_done(update, context, None)
     tires = split_tires(text)
     if not tires:
-        await update.message.reply_text("🤔 Вставьте шины текстом.", reply_markup=kb.storage_ask_kb())
+        await update.message.reply_text("🤔 Вставьте шины текстом.",
+                                        reply_markup=kb.storage_ask_kb(skip=not _pickup(ud)))
         return STORAGE_TIRES
     client = StoredClient(ud["_st_name"], tuple(TireSet(t, "", "", "") for t in tires))
     return await _storage_done(update, context, client)
@@ -620,10 +645,12 @@ def _set_labels(client, sel: set[int]) -> list[str]:
 async def _ask_sets(update: Update, context: ContextTypes.DEFAULT_TYPE, note: str = "") -> int:
     ud = context.user_data
     c = ud["_st_client"]
+    what = "выдать" if _pickup(ud) else "привезти"
     text = note or (f"У клиента <b>{html.escape(c.name)}</b> на хранении комплектов: {len(c.sets)}.\n"
-                    "Отметьте, какие шины привезти, и нажмите «✔️ Готово».")
+                    f"Отметьте, какие шины {what}, и нажмите «✔️ Готово».")
     await update.message.reply_text(text, parse_mode="HTML",
-                                    reply_markup=kb.storage_sets_kb(_set_labels(c, ud["_st_sel"])))
+                                    reply_markup=kb.storage_sets_kb(_set_labels(c, ud["_st_sel"]),
+                                                                    skip=not _pickup(ud)))
     return STORAGE_SETS
 
 
@@ -632,7 +659,8 @@ async def storage_sets(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
     text = update.message.text.strip()
     c, sel = ud["_st_client"], ud["_st_sel"]
     if text == kb.BTN_BACK:
-        await update.message.reply_text("Выберите клиента:", reply_markup=kb.storage_pick_kb(ud["_st_labels"]))
+        await update.message.reply_text("Выберите клиента:",
+                                        reply_markup=kb.storage_pick_kb(ud["_st_labels"], skip=not _pickup(ud)))
         return STORAGE_PICK
     if text == kb.BTN_NO_STORAGE:
         return await _storage_done(update, context, None)
@@ -658,6 +686,11 @@ async def _notify_group(context: ContextTypes.DEFAULT_TYPE, city: config.City, u
         return ""
     text = group_message(st, city=ud.get("post") or city, d=ud["date"], time_str=ud["time"],
                          data=ud["data"])
+    return await _send_to_group(context, cfg, ud, text)
+
+
+async def _send_to_group(context: ContextTypes.DEFAULT_TYPE, cfg, ud: dict, text: str) -> str:
+    """Отправить текст в тему филиала; не вышло — положить его для ручного копирования."""
     if not cfg.chat_id:
         ud["_copy_text"] = text  # группа не настроена — дадим текст скопировать вручную
         return "\n\n⚠️ Группа филиала не настроена — текст для неё ниже."
@@ -708,6 +741,120 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     context.user_data.clear()
     await update.message.reply_text("❌ Отменено. Для новой записи — /start",
                                     reply_markup=kb.remove_kb())
+    return ConversationHandler.END
+
+
+# ───────────────── Забрать хранение (без шиномонтажа) ─────────────────
+# Город → клиент и шины (как при записи с хранением) → дата → время (по желанию)
+# → МОП → подтверждение → сообщение в тему филиала. В таблицу ШМ ничего не пишем.
+
+async def pu_city(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    city = config.city_by_title(update.message.text.strip())
+    if city is None:
+        await update.message.reply_text("🤔 Выберите город кнопкой.", reply_markup=kb.cities_kb())
+        return PU_CITY
+    if not _storage_on(city):
+        await update.message.reply_text("⚠️ Для этого города группа хранения не настроена.",
+                                        reply_markup=kb.cities_kb())
+        return PU_CITY
+    context.user_data["city"] = city
+    return await _ask_storage(update, context)
+
+
+async def _pu_ask_date(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    ud = context.user_data
+    ud["pu_dates"] = cal.dates_through_month_end(config.MONTHS_AHEAD)
+    await update.message.reply_text("📅 Когда клиент заберёт шины?", reply_markup=kb.dates_kb(ud["pu_dates"]))
+    return PU_DATE
+
+
+async def pu_date(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    ud = context.user_data
+    text = update.message.text.strip()
+    if text == kb.BTN_BACK:
+        return await _ask_storage(update, context)
+    d = cal.parse_date_button(text, ud["pu_dates"])
+    if d is None:
+        await update.message.reply_text("🤔 Выберите дату кнопкой.", reply_markup=kb.dates_kb(ud["pu_dates"]))
+        return PU_DATE
+    ud["pu_date"] = d
+    return await _pu_ask_time(update, context)
+
+
+async def _pu_ask_time(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    ud = context.user_data
+    times = cal.slot_times()
+    if ud["pu_date"] == cal.today():  # на сегодня — только оставшееся время
+        now = cal.now()
+        times = [t for t in times if tuple(map(int, t.split(":"))) >= (now.hour, now.minute)]
+    ud["pu_times"] = times
+    await update.message.reply_text(f"⏰ Во сколько? Если клиент не назвал время — «{kb.BTN_NO_TIME}».",
+                                    reply_markup=kb.pickup_time_kb(times))
+    return PU_TIME
+
+
+async def pu_time(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    ud = context.user_data
+    text = update.message.text.strip()
+    if text == kb.BTN_BACK:
+        return await _pu_ask_date(update, context)
+    if text == kb.BTN_NO_TIME:
+        ud["pu_time"] = ""
+    elif text in ud["pu_times"]:
+        ud["pu_time"] = text
+    else:
+        await update.message.reply_text("🤔 Выберите время кнопкой.", reply_markup=kb.pickup_time_kb(ud["pu_times"]))
+        return PU_TIME
+    return await _pu_ask_mop(update, context)
+
+
+async def _pu_ask_mop(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    await update.message.reply_text("✍️ Кто оформляет (МОП)?", reply_markup=kb.choice_kb(
+        config.FALLBACK_VALIDATION["mop"], per_row=config.FIELDS["mop"]["per_row"]))
+    return PU_MOP
+
+
+async def pu_mop(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    ud = context.user_data
+    text = update.message.text.strip()
+    if text == kb.BTN_BACK:
+        return await _pu_ask_time(update, context)
+    if text not in config.FALLBACK_VALIDATION["mop"]:
+        return await _pu_ask_mop(update, context)
+    ud["pu_mop"] = text
+    await update.message.reply_text(_pu_summary(ud), parse_mode="HTML", reply_markup=kb.confirm_kb())
+    return PU_CONFIRM
+
+
+def _pu_summary(ud: dict) -> str:
+    st = ud["storage"]
+    lines = ["📦 <b>Забрать хранение — проверьте:</b>",
+             f"🏙 Город: <b>{ud['city'].title}</b>",
+             f"👤 Клиент: <b>{html.escape(st.name)}</b>",
+             *(f"<i>{html.escape(ln)}</i>" for ln in set_lines(st)),
+             f"📅 Дата: <b>{cal.date_label(ud['pu_date'])}</b>",
+             f"⏰ Время: <b>{ud['pu_time'] or 'не указано'}</b>",
+             f"✍️ МОП: <b>{html.escape(ud['pu_mop'])}</b>"]
+    return "\n".join(lines)
+
+
+async def pu_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    ud = context.user_data
+    text = update.message.text.strip()
+    if text == kb.BTN_BACK:
+        return await _pu_ask_mop(update, context)
+    if text != "✅ Подтвердить":
+        await update.message.reply_text("Нажмите «✅ Подтвердить» или «⬅️ Назад».", reply_markup=kb.confirm_kb())
+        return PU_CONFIRM
+    city = ud["city"]
+    msg = pickup_message(ud["storage"], city=city, d=ud["pu_date"], time_str=ud["pu_time"], mop=ud["pu_mop"])
+    note = await _send_to_group(context, config.STORAGE[city.key], ud, msg)
+    await update.message.reply_text("✅ <b>Готово!</b>\n\n" + _pu_summary(ud).split("\n", 1)[1] + note,
+                                    parse_mode="HTML", reply_markup=kb.remove_kb())
+    copy_text = ud.pop("_copy_text", None)
+    if copy_text:
+        await _send_copy(update, copy_text)
+    await update.message.reply_text("Для новой записи нажмите /start")
     return ConversationHandler.END
 
 
@@ -969,7 +1116,7 @@ def build_app() -> Application:
             CommandHandler("start", start),
             # кнопки меню работают и вне диалога (после перезапуска бота)
             MessageHandler(filters.ChatType.PRIVATE & filters.Regex(
-                rf"^({re.escape(kb.BTN_NEW)}|{re.escape(kb.BTN_FIND)})$"), menu_entry),
+                rf"^({re.escape(kb.BTN_NEW)}|{re.escape(kb.BTN_PICKUP)}|{re.escape(kb.BTN_FIND)})$"), menu_entry),
         ],
         states={
             MENU: [cancel_h, MessageHandler(filters.TEXT & ~filters.COMMAND, menu)],
@@ -983,6 +1130,11 @@ def build_app() -> Application:
             STORAGE_PICK: [cancel_h, MessageHandler(filters.TEXT & ~filters.COMMAND, storage_pick)],
             STORAGE_SETS: [cancel_h, MessageHandler(filters.TEXT & ~filters.COMMAND, storage_sets)],
             STORAGE_TIRES: [cancel_h, MessageHandler(filters.TEXT & ~filters.COMMAND, storage_tires)],
+            PU_CITY: [cancel_h, MessageHandler(filters.TEXT & ~filters.COMMAND, pu_city)],
+            PU_DATE: [cancel_h, MessageHandler(filters.TEXT & ~filters.COMMAND, pu_date)],
+            PU_TIME: [cancel_h, MessageHandler(filters.TEXT & ~filters.COMMAND, pu_time)],
+            PU_MOP: [cancel_h, MessageHandler(filters.TEXT & ~filters.COMMAND, pu_mop)],
+            PU_CONFIRM: [cancel_h, MessageHandler(filters.TEXT & ~filters.COMMAND, pu_confirm)],
             SEARCH_QUERY: [cancel_h, MessageHandler(filters.TEXT & ~filters.COMMAND, search_query)],
             SEARCH_PICK: [cancel_h, MessageHandler(filters.TEXT & ~filters.COMMAND, search_pick)],
             ACTION: [cancel_h, MessageHandler(filters.TEXT & ~filters.COMMAND, action)],

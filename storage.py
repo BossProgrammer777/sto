@@ -136,12 +136,24 @@ def set_lines(c: StoredClient) -> list[str]:
     return [f"{s.tires} — {place_label(s)}" if place_label(s) else s.tires for s in c.sets if s.tires or place_label(s)]
 
 
-def group_message(c: StoredClient, *, city: config.City, d, time_str: str, data: dict) -> str:
-    """Сообщение в группу филиала — в том же стиле, что пишут операторы."""
+def _client_lines(c: StoredClient) -> list[str]:
+    """Клиент, (ряд/место), шины, комментарий — начало сообщения в группу."""
     lines = [f"покупатель ({c.name})", *set_lines(c)]
     comments = list(dict.fromkeys(s.comment for s in c.sets if s.comment))
     if comments:
         lines.append("Комментарий: " + "; ".join(comments))
+    return lines
+
+
+def pickup_message(c: StoredClient, *, city: config.City, d, time_str: str, mop: str) -> str:
+    """«Забрать хранение» (без шиномонтажа) — сообщение в группу филиала."""
+    when = f"{d:%d.%m} {time_str}".strip()
+    return "\n".join([*_client_lines(c), "", f"Забрать хранение {when}", f"{city.title} · МОП: {mop}"])
+
+
+def group_message(c: StoredClient, *, city: config.City, d, time_str: str, data: dict) -> str:
+    """Сообщение в группу филиала — в том же стиле, что пишут операторы."""
+    lines = _client_lines(c)
     lines.append("")
     lines.append(f"шм+хр {d:%d.%m} {time_str}")
     tail = [city.full_title]
