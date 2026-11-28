@@ -10,7 +10,8 @@ Telegram-бот записи на шиномонтаж (помощник опе�
 from __future__ import annotations
 
 import asyncio
-from datetime import timedelta
+import warnings
+from datetime import date, timedelta
 import html
 import logging
 import re
@@ -19,13 +20,18 @@ from telegram import (CopyTextButton, InlineKeyboardButton, InlineKeyboardMarkup
                       ReplyKeyboardMarkup)
 from telegram.constants import ChatType
 from telegram.ext import (
-    Application, CommandHandler, MessageHandler, ConversationHandler,
+    Application, CallbackQueryHandler, CommandHandler, MessageHandler, ConversationHandler,
     ContextTypes, filters,
 )
 
 import config
 import calendar_utils as cal
 import keyboards as kb
+from telegram.warnings import PTBUserWarning
+
+# Кнопки «⚡ ближайшее время» обрабатываются по чату оператора, а не по конкретному
+# сообщению — так и задумано; предупреждение PTB об этом в логах не нужно.
+warnings.filterwarnings("ignore", message="If 'per_message=False'", category=PTBUserWarning)
 from prices import price_lines, price_table
 from sheets import SheetsClient, SheetError
 from storage import (StorageClient, StoredClient, TireSet, client_details, client_label,
@@ -141,8 +147,8 @@ async def lost(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 NEAREST_DAYS = 3  # «Ближайшее свободное время» — сегодня, завтра, послезавтра
 
 
-def _nearest_lines() -> list[str]:
-    """«Город — сегодня 15:00» по каждому городу (ближайшее свободное за 3 дня)."""
+def _nearest() -> list[tuple[config.City, date | None, str]]:
+    """Ближайшее свободное время каждого города за 3 дня: [(город, дата|None, время)]."""
     today = cal.today()
     avail = set(sheets.available_dates())
     days = [d for d in (today + timedelta(days=i) for i in range(NEAREST_DAYS)) if d in avail]
@@ -151,27 +157,70 @@ def _nearest_lines() -> list[str]:
     out = []
     for city in config.button_cities():
         hit = sheets.nearest_free(city, days)
-        if hit is None:
-            when = f"нет мест на {NEAREST_DAYS} дня"
-        else:
-            d, t = hit
-            day = ("сегодня" if d == today else "завтра" if d == today + timedelta(days=1)
-                   else f"{cal.date_button(d)},")
-            when = f"{day} {t}"
-        out.append(f"{city.title} — {when}")
+        out.append((city, *hit) if hit else (city, None, ""))
     return out
 
 
+def _when(d: date, t: str) -> str:
+    today = cal.today()
+    day = ("сегодня" if d == today else "завтра" if d == today + timedelta(days=1)
+           else f"{cal.date_button(d)},")
+    return f"{day} {t}"
+
+
 async def _ask_city(update: Update) -> int:
-    """Выбор города для новой записи + ближайшее свободное время по каждому городу."""
+    """Выбор города для новой записи. Сверху — ближайшее свободное время по городам
+    кнопками: нажал — город, дата и время уже выбраны (дальше диаметр и данные)."""
     try:
-        lines = await _run(_nearest_lines)
+        near = await _run(_nearest)
     except Exception:  # noqa: BLE001 — подсказка не должна мешать записи
         log.exception("Не удалось посчитать ближайшее свободное время")
-        lines = []
-    head = "🕐 Ближайшее свободное время:\n" + "\n".join(lines) + "\n\n" if lines else ""
-    await update.message.reply_text(head + "🏙 Выберите город:", reply_markup=kb.cities_kb())
+        near = []
+    buttons = [[InlineKeyboardButton(f"⚡ {c.short or c.title} · {_when(d, t)}",
+                                     callback_data=f"q|{c.key}|{d.isoformat()}|{t}")]
+               for c, d, t in near if d]
+    full = [c.title for c, d, _ in near if not d]
+    if buttons or full:
+        text = "🕐 Ближайшее свободное время — нажмите, чтобы сразу записать:"
+        if full:
+            text += f"\nНет мест на {NEAREST_DAYS} дня: " + ", ".join(full)
+        await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(buttons) if buttons else None)
+        await update.message.reply_text("🏙 Или выберите город:", reply_markup=kb.cities_kb())
+    else:
+        await update.message.reply_text("🏙 Выберите город:", reply_markup=kb.cities_kb())
     return SELECT_CITY
+
+
+class _FromButton:
+    """Нажатие inline-кнопки → «как сообщение»: дальше обычные шаги отвечают в тот же чат."""
+    def __init__(self, update: Update):
+        self.message = update.callback_query.message
+        self.effective_user = update.effective_user
+        self.effective_chat = update.effective_chat
+
+
+async def quick_pick(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Кнопка «⚡ Город · сегодня 15:00»: город, дата и время выбраны — спрашиваем диаметр."""
+    q = update.callback_query
+    await q.answer()
+    upd = _FromButton(update)
+    if not config.is_allowed(update.effective_user.id):
+        await upd.message.reply_text(_deny_text(update.effective_user.id))
+        return ConversationHandler.END
+    ud = context.user_data
+    ud.clear()
+    try:
+        _, key, ds, t = q.data.split("|")
+        city, d = config.CITIES[key], date.fromisoformat(ds)
+    except (ValueError, KeyError):
+        return await _ask_city(upd)
+    dates = await _run(sheets.available_dates)
+    if d not in dates:  # подсказка устарела (день прошёл)
+        await upd.message.reply_text("⏳ Эта подсказка устарела — вот свежая:")
+        return await _ask_city(upd)
+    ud.update(city=city, dates=dates, date=d, quick_time=t, redate=False)
+    await upd.message.reply_text(f"⚡ {city.title} · {cal.date_label(d)} · {t}")
+    return await _ask_diameter(upd, context)
 
 
 async def _show_menu(update: Update) -> int:
@@ -309,10 +358,18 @@ async def _show_free_times(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         log.warning("Ошибка чтения слотов: %s", e)
         await update.message.reply_text(f"⚠️ Не удалось прочитать расписание: {e}")
         return await _ask_diameter(update, context)
+    quick = ud.pop("quick_time", None)
     if not free_posts:
+        if quick:
+            await update.message.reply_text(f"😔 {quick} уже не подходит.")
         return await _ask_other_date(update, context)
     ud["redate"] = False
     ud["free"], ud["free_posts"] = list(free_posts), free_posts
+    if quick in free_posts:  # время с кнопки «⚡» свободно для этого диаметра — сразу к данным
+        return await _choose_time(update, context, quick)
+    if quick:
+        why = f" (для R{config.two_slots_from(city)}+ нужны 2 слота подряд)" if config.needs_two_slots(city, diameter) else ""
+        await update.message.reply_text(f"😔 {quick} уже не подходит{why}. Выберите другое время:")
     big = " (займёт 2 слота)" if config.needs_two_slots(city, diameter) else ""
     posts = config.posts_of(city)
     hint = (f"\nПост бот выберет сам: R13–R{config.SECOND_POST_MAX_DIAMETER} — сначала "
@@ -351,6 +408,8 @@ async def _ask_other_date(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 async def select_diameter(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     ud = context.user_data
     text = update.message.text.strip()
+    if text == kb.BTN_BACK and ud.pop("quick_time", None):  # пришли с кнопки «⚡» — к городам
+        return await _ask_city(update)
     if text == kb.BTN_BACK:
         await update.message.reply_text("📅 Выберите дату:",
                                         reply_markup=kb.dates_kb(ud["dates"], ud.get("busy_dates", set()),
@@ -379,7 +438,11 @@ async def select_time(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
         await update.message.reply_text("🤔 Выберите время кнопкой.",
                                         reply_markup=kb.times_kb(context.user_data["free"]))
         return SELECT_TIME
+    return await _choose_time(update, context, text)
 
+
+async def _choose_time(update: Update, context: ContextTypes.DEFAULT_TYPE, text: str) -> int:
+    """Время выбрано (кнопкой или с «⚡») — дальше поля записи."""
     context.user_data["time"] = text
     context.user_data["post"] = context.user_data["free_posts"][text]
     city: config.City = context.user_data["city"]
@@ -1168,6 +1231,8 @@ def build_app() -> Application:
     conv = ConversationHandler(
         entry_points=[
             CommandHandler("start", start),
+            # кнопки «⚡ ближайшее время» — с любого шага и после перезапуска
+            CallbackQueryHandler(quick_pick, pattern=r"^q\|"),
             # кнопки меню работают и вне диалога (после перезапуска бота)
             MessageHandler(filters.ChatType.PRIVATE & filters.Regex(
                 rf"^({re.escape(kb.BTN_NEW)}|{re.escape(kb.BTN_PICKUP)}|{re.escape(kb.BTN_FIND)})$"), menu_entry),
