@@ -218,6 +218,7 @@ class SheetsClient:
         if not force and cached and (_time.time() - cached[0]) < MONTH_CACHE_TTL:
             return cached[1]
 
+        t0 = _time.time()
         try:
             meta = self.ss.fetch_sheet_metadata({
                 "includeGridData": True,
@@ -256,7 +257,34 @@ class SheetsClient:
 
         md = MonthData(name, values, colors, hidden, formulas)
         self._month_cache[name] = (_time.time(), md)
+        dt = _time.time() - t0  # долгие загрузки видно в логах Railway
+        log.log(logging.INFO if dt > 2 else logging.DEBUG, "Лист «%s» загружен из Google за %.1f с", name, dt)
         return md
+
+    def refresh(self) -> None:
+        """Фоновое обновление: свежая копия месячных листов (текущий и следующий),
+        чтобы операторы не ждали Google на выборе города и даты. Перед записью бот
+        всё равно перечитывает лист."""
+        seen: set[tuple[int, int]] = set()
+        for d in self.available_dates():
+            if (d.year, d.month) in seen:
+                continue
+            seen.add((d.year, d.month))
+            try:
+                self._load_month(d, force=True)
+            except Exception as e:  # noqa: BLE001
+                log.info("Фоновое обновление «%s» не удалось: %s", cal.month_sheet_name(d), e)
+
+    def nearest_free(self, city: config.City, days: list[date]) -> tuple[date, str] | None:
+        """Ближайшее свободное время поста среди дней (для подсказки при выборе города)."""
+        for d in days:
+            try:
+                free = self.free_slots_by_post(city, d)
+            except SheetError:
+                continue
+            if free:
+                return d, next(iter(free))
+        return None
 
     def _block_map(self, md: MonthData) -> tuple[int, dict[str, int]]:
         """

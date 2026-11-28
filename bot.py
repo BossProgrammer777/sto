@@ -10,6 +10,7 @@ Telegram-бот записи на шиномонтаж (помощник опе�
 from __future__ import annotations
 
 import asyncio
+from datetime import timedelta
 import html
 import logging
 import re
@@ -137,6 +138,42 @@ async def lost(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "Что делаем?", reply_markup=kb.menu_kb())
 
 
+NEAREST_DAYS = 3  # «Ближайшее свободное время» — сегодня, завтра, послезавтра
+
+
+def _nearest_lines() -> list[str]:
+    """«Город — сегодня 15:00» по каждому городу (ближайшее свободное за 3 дня)."""
+    today = cal.today()
+    avail = set(sheets.available_dates())
+    days = [d for d in (today + timedelta(days=i) for i in range(NEAREST_DAYS)) if d in avail]
+    if not days:
+        return []
+    out = []
+    for city in config.button_cities():
+        hit = sheets.nearest_free(city, days)
+        if hit is None:
+            when = f"нет мест на {NEAREST_DAYS} дня"
+        else:
+            d, t = hit
+            day = ("сегодня" if d == today else "завтра" if d == today + timedelta(days=1)
+                   else f"{cal.date_button(d)},")
+            when = f"{day} {t}"
+        out.append(f"{city.title} — {when}")
+    return out
+
+
+async def _ask_city(update: Update) -> int:
+    """Выбор города для новой записи + ближайшее свободное время по каждому городу."""
+    try:
+        lines = await _run(_nearest_lines)
+    except Exception:  # noqa: BLE001 — подсказка не должна мешать записи
+        log.exception("Не удалось посчитать ближайшее свободное время")
+        lines = []
+    head = "🕐 Ближайшее свободное время:\n" + "\n".join(lines) + "\n\n" if lines else ""
+    await update.message.reply_text(head + "🏙 Выберите город:", reply_markup=kb.cities_kb())
+    return SELECT_CITY
+
+
 async def _show_menu(update: Update) -> int:
     await update.message.reply_text("🏠 Меню. Что делаем?", reply_markup=kb.menu_kb())
     return MENU
@@ -146,8 +183,7 @@ async def menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     text = update.message.text.strip()
     if text == kb.BTN_NEW:
         context.user_data.clear()
-        await update.message.reply_text("🏙 Выберите город:", reply_markup=kb.cities_kb())
-        return SELECT_CITY
+        return await _ask_city(update)
     if text == kb.BTN_PICKUP:
         context.user_data.clear()
         context.user_data["mode"] = "pickup"
@@ -228,8 +264,7 @@ async def select_date(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
         return await _show_free_times(update, context)  # сразу время, без диаметра
 
     if text == kb.BTN_BACK:
-        await update.message.reply_text("🏙 Выберите город:", reply_markup=kb.cities_kb())
-        return SELECT_CITY
+        return await _ask_city(update)
 
     busy, upto = ud.get("busy_dates", set()), ud.get("upto_dates", {})
     d = next((x for x in ud["dates"]
@@ -1088,8 +1123,24 @@ async def on_error(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
             log.exception("Не удалось сообщить оператору об ошибке")
 
 
+REFRESH_EVERY = 30         # сек — как часто фоном обновлять копию таблицы
+REFRESH_HOURS = (7, 21)    # только в рабочее время (по Киеву)
+
+
+async def _keep_fresh() -> None:
+    """Фоном держать свежую копию таблицы, чтобы шаги записи не ждали Google."""
+    while True:
+        if REFRESH_HOURS[0] <= cal.now().hour < REFRESH_HOURS[1]:
+            try:
+                await asyncio.to_thread(sheets.refresh)
+            except Exception:  # noqa: BLE001
+                log.exception("Фоновое обновление таблицы не удалось")
+        await asyncio.sleep(REFRESH_EVERY)
+
+
 async def _post_init(app: Application) -> None:
-    """Запустить API расписания для сайта в том же event loop, что и бот."""
+    """Фоновое обновление таблицы и API расписания для сайта — в том же event loop, что и бот."""
+    app.bot_data["refresher"] = asyncio.create_task(_keep_fresh())
     if not config.WEB_API_ENABLED:
         return
     try:
@@ -1100,6 +1151,9 @@ async def _post_init(app: Application) -> None:
 
 
 async def _post_shutdown(app: Application) -> None:
+    task = app.bot_data.get("refresher")
+    if task is not None:
+        task.cancel()
     runner = app.bot_data.get("web_runner")
     if runner is not None:
         await runner.cleanup()
